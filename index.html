@@ -1,0 +1,1550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CrimeRisk</title>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/pmtiles@3.2.1/dist/pmtiles.js"></script>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #0b0e14; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #e6e9ef; }
+  #map { position: absolute; inset: 0; }
+  .panel { position: absolute; top: 14px; left: 14px; width: 296px; background: rgba(16,20,28,0.94); border: 1px solid #232a36; border-radius: 10px; padding: 14px 16px; box-shadow: 0 8px 28px rgba(0,0,0,0.45); z-index: 5; max-height: calc(100% - 28px); overflow-y: auto; transition: max-height .18s ease, background-color .18s ease; }
+  .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .panel h1 { font-size: 16px; margin: 0; letter-spacing: .2px; }
+  .panel-toggle { display: none; min-width: 44px; min-height: 36px; padding: 7px 10px; border: 1px solid #354154; border-radius: 7px; background: #182231; color: #e6e9ef; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+  .panel-body { margin-top: 2px; }
+  .panel .sub { font-size: 11px; color: #8a93a6; margin: 0 0 3px; line-height: 1.4; }
+  /* Always-visible data vintage. Deliberately given its own colour and a rule so
+     it does not read as a continuation of the layer/coverage line above it. */
+  .panel .vintage { font-size: 10.5px; color: #7b8497; margin: 0 0 12px; line-height: 1.45;
+                    padding-bottom: 9px; border-bottom: 1px solid #1c2230; }
+  .panel .vintage b { color: #aab2c2; font-weight: 600; }
+  a.method-link { display: inline-block; margin-top: 8px; font-size: 11px; color: #7fb4e8;
+                  text-decoration: none; font-weight: 600; }
+  a.method-link:hover { text-decoration: underline; }
+  label.fld { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: #8a93a6; margin: 0 0 5px; }
+  select { width: 100%; background: #0f1622; color: #e6e9ef; border: 1px solid #2a3342; border-radius: 7px; padding: 7px 9px; font-size: 13px; }
+  .search-wrap { position: relative; margin-bottom: 12px; }
+  .search-row { display: flex; gap: 6px; }
+  .search-row input { min-width: 0; flex: 1; background: #0f1622; color: #e6e9ef; border: 1px solid #2a3342; border-radius: 7px; padding: 8px 9px; font: inherit; font-size: 13px; }
+  .search-row input:focus { outline: 2px solid rgba(127,180,232,.35); outline-offset: 1px; border-color: #547ba2; }
+  .search-status { min-height: 14px; margin-top: 4px; color: #7b8497; font-size: 10px; line-height: 1.35; }
+  .search-results { position: absolute; z-index: 9; top: 38px; left: 0; right: 0; margin: 0; padding: 4px; list-style: none; background: #101722; border: 1px solid #303a4b; border-radius: 7px; box-shadow: 0 12px 28px rgba(0,0,0,.48); }
+  .search-results:empty { display: none; }
+  .search-results button { width: 100%; padding: 7px 8px; border: 0; border-radius: 5px; background: transparent; color: #d9deea; font: inherit; font-size: 11.5px; line-height: 1.35; text-align: left; cursor: pointer; }
+  .search-results button:hover, .search-results button:focus { background: #1c2737; outline: none; }
+  .explain { font-size: 11px; color: #aab2c2; line-height: 1.5; margin: 10px 0 0; padding: 8px 10px; background: rgba(255,255,255,0.03); border: 1px solid #232a36; border-radius: 7px; }
+  .explain b { color: #e6e9ef; font-weight: 600; }
+  .toggle { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12px; color: #c2c9d6; cursor: pointer; user-select: none; }
+  .toggle input { accent-color: #ef8a62; width: 14px; height: 14px; cursor: pointer; }
+  .legend { margin-top: 14px; }
+  /* The bar carries NO static gradient: both families paint it from the live
+     paint expression's own colors at their own positions (see setLayer). A CSS
+     class here would be a second, drifting copy of the ramp — which is exactly
+     what the density legend used to be. */
+  .legend .bar { height: 10px; border-radius: 5px; }
+  .legend .ticks { display: flex; justify-content: space-between; font-size: 10px; color: #8a93a6; margin-top: 4px; }
+  /* Ticks sit at each break/stop's true log position on the bar, so tick spacing
+     mirrors band width. Ends are pinned inside the panel. */
+  .legend .ticks.fixed { display: block; position: relative; height: 12px; }
+  .legend .ticks.fixed span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+  .legend .ticks.fixed span.first { left: 0 !important; transform: none; }
+  .legend .ticks.fixed span.last { left: auto !important; right: 0; transform: none; }
+  /* Second tick row: share of PEOPLE above each stop (the density legend's ramp is
+     per-layer, so its stops are unfamiliar values a reader cannot place). */
+  .legend .ticks.pct { font-size: 9px; color: #7b8497; margin-top: 1px; height: 11px; }
+  .legend .pctline { font-size: 10px; color: #8a93a6; margin-top: 6px; line-height: 1.4; }
+  .legend .pctline b { color: #e6e9ef; font-weight: 600; }
+  .legend .view-share { font-size: 10px; color: #aab2c2; margin-top: 7px; line-height: 1.45; }
+  .legend .view-share b { color: #e6e9ef; font-weight: 600; }
+  .legend .note { font-size: 10px; color: #8a93a6; margin-top: 8px; line-height: 1.4; }
+  .legend .key { display: inline-block; width: 11px; height: 11px; border-radius: 2px; vertical-align: -1px; margin-right: 4px; }
+  .legend .nodata { background: #3a4150; border: 1px solid #4a5365; }
+  .legend .special { background: repeating-linear-gradient(45deg, #5a4632 0 3px, #2a2018 3px 6px); border: 1px solid #6b5337; }
+  .disclaimer { margin-top: 13px; padding-top: 11px; border-top: 1px solid #232a36; font-size: 10.5px; color: #9aa3b4; line-height: 1.5; }
+  .disclaimer .t { color: #c2c9d6; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; font-size: 9.5px; display: block; margin-bottom: 4px; }
+  .maplibregl-popup-content { background: #10141c; color: #e6e9ef; border: 1px solid #2a3342; border-radius: 11px; padding: 14px 15px; font-size: 12px; box-shadow: 0 10px 28px rgba(0,0,0,.52); max-width: 340px; }
+  .maplibregl-popup-tip { border-top-color: #10141c !important; border-bottom-color: #10141c !important; }
+  /* ---- map card (hover = 3 elements; pinned = those 3 + Details) ----------
+     Every rule below is consumed by ONE renderer (cardHTML). There is no second
+     popup stylesheet and no leftover technical-row styling: if a class is not
+     here, the card cannot emit it. */
+  .cr-card { min-width: 208px; }
+  .cr-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+  .cr-place { color: #f4f6f9; font-size: 13px; font-weight: 700; line-height: 1.3; }
+  .cr-chip { flex: none; align-self: center; border: 1px solid #8a6b25; border-radius: 3px; padding: 1px 6px;
+             color: #e2b657; font-size: 9.5px; font-weight: 700; letter-spacing: .11em; line-height: 1.5;
+             font-variant-caps: all-small-caps; white-space: nowrap; cursor: help; }
+  .cr-value { margin-top: 7px; color: #f4f6f9; font-size: 26px; font-weight: 730; line-height: 1.05;
+              font-variant-numeric: tabular-nums; }
+  .cr-value.is-missing { color: #8a93a6; }
+  .cr-sub { margin-top: 4px; color: #9aa3b4; font-size: 11px; line-height: 1.35; }
+  .cr-details { margin-top: 10px; padding-top: 7px; border-top: 1px solid #252d3a; }
+  .cr-details summary { min-height: 28px; color: #9ba7b9; font-size: 11px; font-weight: 650; line-height: 28px;
+                        cursor: pointer; user-select: none; }
+  .cr-details summary:hover, .cr-details summary:focus { color: #dce2ec; outline: none; }
+  .cr-offenses { display: grid; grid-template-columns: 1fr auto; gap: 2px 14px; font-size: 11px; padding-top: 2px; }
+  .cr-offenses .k { color: #9aa3b4; }
+  .cr-offenses .v { text-align: right; color: #e6e9ef; font-variant-numeric: tabular-nums; }
+  .cr-geoid { margin-top: 9px; color: #737e90; font-size: 10px; font-variant-numeric: tabular-nums; }
+  .pp2-place { font-weight: 600; font-size: 12.5px; color: #e6e9ef; display: flex; align-items: center; gap: 8px; }
+  .pp2-chip { font-size: 9px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #e0b64f; border: 1px solid rgba(224,182,79,0.55); border-radius: 4px; padding: 1.5px 5px; white-space: nowrap; }
+  .pp2-value { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.15; margin-top: 2px; }
+  .pp2-context { font-size: 11.5px; color: #8a93a6; margin-top: 1px; }
+  .pp2-chip-note { font-size: 10.5px; color: #8a93a6; margin-top: 5px; line-height: 1.4; }
+  .pp2-details { margin-top: 7px; font-size: 11px; color: #aab2c2; }
+  .pp2-details summary { cursor: pointer; color: #7b8497; }
+  .pp2-grid { display: grid; grid-template-columns: auto auto; gap: 2px 14px; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .pp2-grid div:nth-child(even) { text-align: right; color: #cfd5e0; }
+  .pp2-geoid { margin-top: 6px; font-size: 9.5px; color: #5b6373; }
+  .loading { position: absolute; inset: 0; z-index: 4; display: grid; place-items: center; pointer-events: none; background: rgba(11,14,20,.34); opacity: 1; transition: opacity .25s ease, visibility .25s ease; }
+  .loading.is-done { opacity: 0; visibility: hidden; }
+  .loading-chip { display: flex; align-items: center; gap: 10px; padding: 10px 13px; border: 1px solid #2a3342; border-radius: 999px; background: rgba(16,20,28,.94); color: #c2c9d6; box-shadow: 0 8px 24px rgba(0,0,0,.35); font-size: 12px; }
+  .loading-spinner { width: 14px; height: 14px; border: 2px solid #465267; border-top-color: #e6e9ef; border-radius: 50%; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) {
+    .panel, .loading { transition: none; }
+    .loading-spinner { animation-duration: 1.6s; }
+  }
+  @media (max-width: 700px) {
+    .panel { top: 10px; left: 10px; right: 10px; width: auto; max-height: calc(100% - 20px); padding: 10px 12px; }
+    .panel-toggle { display: inline-flex; align-items: center; justify-content: center; }
+    .panel.is-collapsed { max-height: 58px; overflow: hidden; background: rgba(16,20,28,.97); }
+    .panel.is-collapsed .panel-body { display: none; }
+    .panel:not(.is-collapsed) .panel-body { display: block; }
+    .maplibregl-ctrl-top-right { top: 64px; }
+    .maplibregl-popup-content { max-width: min(340px, calc(100vw - 28px)); }
+    .cr-card { min-width: min(208px, calc(100vw - 58px)); }
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="loading" id="loading" role="status" aria-live="polite">
+  <div class="loading-chip"><span class="loading-spinner" aria-hidden="true"></span><span>Loading crime map…</span></div>
+</div>
+<div class="panel is-collapsed" id="panel">
+  <div class="panel-head">
+    <h1>CrimeRisk</h1>
+    <button class="panel-toggle" id="panel-toggle" type="button" aria-controls="panel-body" aria-expanded="false">Show controls</button>
+  </div>
+  <div class="panel-body" id="panel-body">
+  <!-- Two lines that stay on screen at every zoom and on every layer. `meta` is
+       WHAT is drawn (layer name, geography, coverage); `vintage` is WHEN the data
+       is from. Both used to be inferable only by opening a popup or reading the
+       disclaimer paragraph, and reviewers repeatedly could not tell how old the
+       surface was — the single most common trust question asked of it. -->
+  <p class="sub" id="meta">Loading crime index...</p>
+  <p class="vintage" id="vintage"></p>
+  <p class="sub" id="geo-note">Neighborhood views use census block groups. Murder, rape, and harm-weighted burden use census tracts.</p>
+  <div class="search-wrap">
+    <label class="fld" for="place-search">Find a place or address</label>
+    <div class="search-row"><input id="place-search" type="search" autocomplete="off" spellcheck="false" placeholder="Louisville, KY" aria-controls="search-results" aria-autocomplete="list" /></div>
+    <ul class="search-results" id="search-results" role="listbox"></ul>
+    <div class="search-status" id="search-status" aria-live="polite"></div>
+  </div>
+  <label class="fld" for="crime-sel">Crime type</label>
+  <select id="crime-sel"></select>
+  <label class="fld" for="measure-sel" style="margin-top:11px">Measure <span style="text-transform:none;letter-spacing:0;color:#6f7889">(what the number means)</span></label>
+  <select id="measure-sel"></select>
+  <p class="explain" id="measure-explain"></p>
+  <label class="toggle" for="su-toggle" title="Mark designated special-use areas without changing their values.">
+    <input type="checkbox" id="su-toggle" />
+    Mark special-use areas
+  </label>
+  <div class="legend">
+    <div class="bar index" id="legend-bar"></div>
+    <!-- Bar, ticks and percentage rows are ALL rewritten per layer by setLayer from
+         the paint expression the map actually holds: value-positioned break labels
+         for the fixed index scale, value-positioned stop labels for the per-layer
+         density ramp (.ticks.fixed), plus the share of people above each line. -->
+    <div class="ticks" id="legend-ticks"></div>
+    <div class="ticks pct" id="legend-pct-row" style="display:none"></div>
+    <div class="pctline" id="legend-pct"></div>
+    <div class="note" id="legend-note"></div>
+  </div>
+  <div class="disclaimer" id="disclaimer">
+    <a class="method-link" id="methodology-link" href="methodology.html" target="_blank" rel="noopener">Read the full methodology &rarr;</a>
+    <a class="method-link" id="attribution-link" href="attribution.html" target="_blank" rel="noopener">Sources and attribution &rarr;</a>
+  </div>
+  </div>
+</div>
+<script>
+const SOURCE = "blockgroups";
+const LAYER_ID = "bg-fill";
+const SPECIAL_LAYER_ID = "bg-special";
+// Tract tiles carry the four murder/rape index layers (those two offenses publish
+// at census-tract support). The tract fill + special layers mirror the block-group
+// pair; setLayer reveals whichever geometry the active layer renders from.
+const TRACT_SOURCE = "tracts";
+const TRACT_LAYER_ID = "tract-fill";
+const TRACT_SPECIAL_LAYER_ID = "tract-special";
+// Every block-group-supported measure uses its same-measure tract aggregation
+// below z6, then reveals block-group detail.  Tract-supported measures remain at
+// tract scale.  Neither the field nor the colour scale changes at the handoff.
+const TRACT_OVERVIEW_MAX_ZOOM = 6;
+let SNAP = null;          // snapshot.json
+let STATS = null;         // per-key color stats
+let CURRENT = null;       // current layer key
+let INCLUDE_SU = false;   // optional special-use hatch state
+let popupPinned = false;  // click/tap pins; hover remains transient on fine pointers
+let firstDataPaint = false;
+let applyingHashState = false;
+let activeGeometryLane = null;
+const ATTRIBUTION = "&copy; OpenFreeMap &copy; OpenStreetMap contributors &middot; Crime data: FBI Crime Data Explorer &amp; state/city public records";
+
+function parseHashState() {
+  const q = new URLSearchParams(location.hash.replace(/^#/, ""));
+  const center = (q.get("center") || "").split(",").map(Number);
+  const zoomRaw = q.get("zoom");
+  const zoom = zoomRaw === null ? NaN : Number(zoomRaw);
+  return {
+    center: center.length === 2 && center.every(Number.isFinite) ? center : null,
+    zoom: Number.isFinite(zoom) ? Math.max(3, Math.min(12, zoom)) : null,
+    layer: q.get("layer"),
+    measure: q.get("measure"),
+  };
+}
+const INITIAL_HASH_STATE = parseHashState();
+
+// Register the pmtiles protocol so MapLibre can read tiles from the archive.
+const protocol = new pmtiles.Protocol();
+maplibregl.addProtocol("pmtiles", protocol.tile);
+
+const map = new maplibregl.Map({
+  container: "map",
+  // OpenFreeMap's dark style: a no-key, hosted MapLibre style (OpenMapTiles
+  // schema) that replaced the CARTO raster basemap for license reasons. It is a
+  // full vector style, not a "no labels" variant, so our data layers are
+  // inserted beneath its label layers in addStyleLayers() rather than relying on
+  // a separate labels-on-top raster the way the old dark_nolabels setup did.
+  style: "https://tiles.openfreemap.org/styles/dark",
+  center: INITIAL_HASH_STATE.center || [-96, 38],
+  zoom: INITIAL_HASH_STATE.zoom == null ? 4 : INITIAL_HASH_STATE.zoom,
+  maxZoom: 12,
+  minZoom: 3,
+  attributionControl: false,
+});
+map.addControl(new maplibregl.AttributionControl({
+  compact: true,
+  customAttribution: ATTRIBUTION,
+}));
+map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+
+// --- helpers --------------------------------------------------------------
+function defByKey(key) { return SNAP.indices.find(i => i.key === key); }
+function isDensity(key) { const d = defByKey(key); return d && d.kind === "density"; }
+
+// Derived layers (`sum_of` in the snapshot, e.g. the personal/property rollup
+// densities) have no baked tile attribute: their value is the sum of the member
+// per-offense keys. These two helpers are the single read path for a layer's
+// per-feature value — as a MapLibre expression for paint, and from popup props.
+function valueExpr(key) {
+  const d = defByKey(key);
+  if (d && d.sum_of) return ["+", ...d.sum_of.map(k => ["to-number", ["get", k]])];
+  return ["to-number", ["get", key]];
+}
+function hasValueExpr(key) {
+  const d = defByKey(key);
+  if (d && d.sum_of) return ["any", ...d.sum_of.map(k => ["has", k])];
+  return ["has", key];
+}
+function layerVal(p, key) {
+  const d = defByKey(key);
+  if (d && d.sum_of) {
+    let s = 0, any = false;
+    d.sum_of.forEach(k => { const v = p[k]; if (v != null && !Number.isNaN(+v)) { s += +v; any = true; } });
+    return any ? s : null;
+  }
+  return p[key];
+}
+
+// The two geometry lanes and their fill / special layer ids.
+const GEOM = {
+  bg: { fill: LAYER_ID, special: SPECIAL_LAYER_ID },
+  tract: { fill: TRACT_LAYER_ID, special: TRACT_SPECIAL_LAYER_ID },
+};
+// Tile keys are identical across sources, so the paint expression, estimand and
+// legend remain fixed during the overview-to-detail handoff.
+function isTractOverview(key) {
+  const declaredTract = SNAP.layer_source && SNAP.layer_source[key] === "tract";
+  return !declaredTract && map.getZoom() < TRACT_OVERVIEW_MAX_ZOOM;
+}
+function sourceForLayer(key) {
+  const declaredTract = SNAP.layer_source && SNAP.layer_source[key] === "tract";
+  return (declaredTract || isTractOverview(key)) ? "tract" : "bg";
+}
+
+// The offenses a layer is built from: its own for a per-offense layer, the `sum_of`
+// members for a derived rollup, all published offenses for a total.
+function memberSuffixes(key) {
+  const off = SNAP.layer_offense[key];
+  if (off) return [offSuffix(off)];
+  const d = defByKey(key);
+  if (d && d.sum_of) return d.sum_of.map(k => k.slice(2));
+  if (["i_per_adj", "i_per", "d_per"].includes(key)) return ["mur", "rap", "rob", "agg"];
+  if (["i_pro_adj", "i_pro", "d_pro"].includes(key)) return ["bur", "lar", "mvt"];
+  return SNAP.offenses.map(o => o.key);
+}
+
+function offenseLabel(sfx) {
+  const o = SNAP.offenses.find(x => x.key === sfx);
+  return o ? o.label : sfx;
+}
+
+// The estimate-mode machinery that used to write a muted cell's badge and reason
+// sentence (mutedCode / mutedReason / isSpecialUse) is gone with the prose card:
+// a cell with no published value now shows an em dash and "not available", and
+// the hatch overlay (specialFilter) is what marks those cells on the map.
+
+// ---- color expressions ---------------------------------------------------
+// INDEX layers use ONE FIXED, VALUE-ANCHORED break set — the same breaks for every
+// index layer, so a color means the same thing on the robbery map as on the total
+// map and the layers are readable against each other.
+//
+// This replaced a per-layer ROBUST QUANTILE (equal-count) scale on 2026-07-28. The
+// quantile scale was answering the right complaint (a linear ramp crushes the
+// low-end majority into one flat color) with a value-blind device, and it
+// manufactured artifacts of its own: with 7 of 12 stops below index 100, a
+// SIX-POINT difference between two rural block groups could cross two color bands
+// and print a hard seam at a state line where the underlying values barely differ,
+// while a metro running 1.5x the national average interpolated to near-white and
+// read as unremarkable. A degenerate low end made it worse — robbery's p2 and p10
+// are both exactly 0, pinning a bottom stop at 0 and painting 16,211 block groups a
+// single flat color. Fixed breaks have neither failure mode: a color is a value.
+//
+// The colorway is diverging blue -> white -> red with white anchored exactly at
+// 100. The former 800 ceiling collapsed thousands of valid high cells into one
+// red swatch; the octave tail retains visible multiplicative differences without
+// changing the meaning of 100.
+const INDEX_RAMP = [
+  "#053061","#124984","#2166ac","#4393c3","#92c5de","#d1e5f0",
+  "#f7f7f7",
+  "#fddbc7","#f4a582","#d6604d","#b2182b","#8f1023","#6f0018",
+  "#4f000f","#2f0008"
+];
+const INDEX_BREAKS = [3.125, 6.25, 12.5, 25, 50, 75, 100, 133, 200, 400, 800, 1600, 3200, 6400, 12800];
+// One color per break, white on 100. Guard the pairing rather than let a future
+// edit to either list silently shift the whole national surface.
+if (INDEX_BREAKS.length !== INDEX_RAMP.length) throw new Error("INDEX_BREAKS/INDEX_RAMP length mismatch");
+// Floor for the log domain: an index can legitimately be 0 (no expected crime), and
+// log10(0) is -Infinity. Any positive floor below the first break paints the same
+// deepest blue, so this only keeps the expression well-formed.
+const INDEX_LOG_FLOOR = 0.1;
+
+function indexColorExpr(key) {
+  // Same domain for every index layer — deliberately independent of STATS[key].
+  const expr = ["interpolate", ["linear"],
+                ["log10", ["max", valueExpr(key), INDEX_LOG_FLOOR]]];
+  INDEX_BREAKS.forEach((v, i) => expr.push(Math.log10(v), INDEX_RAMP[i]));
+  return expr;
+}
+
+// Position of an index value on the legend bar (0-100%), matching the map's log
+// interpolation exactly so the bar is a readable key and not a decoration.
+function indexLegendPct(v) {
+  const lo = Math.log10(INDEX_BREAKS[0]);
+  const hi = Math.log10(INDEX_BREAKS[INDEX_BREAKS.length - 1]);
+  return (Math.log10(v) - lo) / (hi - lo) * 100;
+}
+
+// DENSITY layers are sequential and log-scaled. The build supplies nine log-even
+// stops from sparse-land p10 through block-group p99.99. The old area-weighted
+// p99.9 ceiling put burglary's deepest red at 36/sq mi, so nearly every dense-city
+// cell clamped to the same color. Equal log intervals make a given multiplicative
+// difference occupy the same amount of the ramp anywhere in its range.
+const DENSITY_COLORS = [
+  "#0d2818", "#21633a", "#4f8f43", "#91b83e", "#d7d83b",
+  "#f6c431", "#f38a22", "#d9471f", "#7f1016"
+];
+
+// The log-domain floor. It must be the SMALLEST POSITIVE VALUE THE FIELD CAN
+// REPRESENT: any value below it is indistinguishable from the floor on screen, so
+// a floor above the field's precision throws away real variation. It used to be
+// hardcoded 0.01, matching a 2dp density field — which flattened 37% of CONUS land
+// (86.8-97.5% on the sparse offense layers) into one bottom color, most of it real
+// positive density that had rounded to 0.00 or been pinned at 0.01. The build now
+// declares the field precision and the matching floor (01 -> index_stats.json
+// `_meta` -> snapshot `density_floor`), so the paint floor cannot drift from the
+// number of digits the tiles actually carry. The 0.01 fallback is only for reading
+// an older snapshot that predates the field.
+function densityFloor() {
+  const f = SNAP && SNAP.density_floor;
+  return (typeof f === "number" && f > 0) ? f : 0.01;
+}
+
+// The stop values that anchor this layer's ramp, in ramp order.
+function densityStopValues(s) {
+  if (Array.isArray(s.ramp_stops) && s.ramp_stops.length === DENSITY_COLORS.length) {
+    return s.ramp_stops;
+  }
+  const top = (s.p999 != null && s.p999 > 0) ? s.p999 : s.max;   // older snapshot -> max
+  return [s.p10, s.p50, s.p90, s.p99, top];
+}
+
+function densityColors(s) {
+  const n = densityStopValues(s).length;
+  if (n === DENSITY_COLORS.length) return DENSITY_COLORS;
+  if (n === 5) {
+    return [DENSITY_COLORS[0], DENSITY_COLORS[2], DENSITY_COLORS[4], DENSITY_COLORS[6], DENSITY_COLORS[8]];
+  }
+  throw new Error(`Unsupported density ramp length: ${n}`);
+}
+
+// Log-domain stops for the density ramp, forced STRICTLY INCREASING. A sparse
+// offense can repeat a quantile (p10 == p50 when most positive cells share a
+// value), and MapLibre rejects an `interpolate` whose inputs are not ascending —
+// the same stop-collision class that pinned robbery's index bottom stop at 0. Each
+// colliding stop is nudged one epsilon above its predecessor in log space, which
+// keeps the color order and collapses the degenerate band to ~nothing.
+//
+// This is the SINGLE source of the density ramp: the paint expression and the
+// legend bar are both built from it, so the bar cannot claim colors or positions
+// the map does not paint (it used to be a static 7-color CSS gradient against a
+// 5-color paint, with its middle tick labelling p50 where the map painted 13-48x
+// that value).
+function densityLogStops(s) {
+  const EPS = 1e-4;
+  const floor = densityFloor();
+  const out = [];
+  let prev = -Infinity;
+  densityStopValues(s).forEach(v => {
+    let x = Math.log10(Math.max(v, floor));
+    if (x <= prev) x = prev + EPS;
+    prev = x;
+    out.push(x);
+  });
+  return out;
+}
+
+function densityColorExpr(key) {
+  const expr = ["interpolate", ["linear"],
+                ["log10", ["max", valueExpr(key), densityFloor()]]];
+  const colors = densityColors(STATS[key]);
+  densityLogStops(STATS[key]).forEach((x, i) => expr.push(x, colors[i]));
+  return expr;
+}
+
+// Position of a density log-stop on the legend bar (0-100%), from the same log
+// values the paint interpolates over — the density counterpart of indexLegendPct.
+function densityLegendPct(logs, i) {
+  const span = logs[logs.length - 1] - logs[0];
+  return span > 0 ? (logs[i] - logs[0]) / span * 100 : (i === 0 ? 0 : 100);
+}
+
+// Full paint color for the MAIN fill layer: no-data grey when the active value is
+// absent; special-area handling is delegated to a separate hatched layer drawn on
+// top. A special-use cell with a valid active measure keeps that value; an invalid
+// measure is grey because the value is absent, not merely because of its land use.
+function colorExpr(key) {
+  const ramp = isDensity(key) ? densityColorExpr(key) : indexColorExpr(key);
+  return ["case", ["!", hasValueExpr(key)], "#3a4150", ramp];
+}
+
+// ---- national-zoom compositing -------------------------------------------
+// At national zoom a block group is far smaller than a pixel, so every pixel in a
+// dense metro accumulates MANY polygon edges. The per-polygon hairline outline
+// (rgba(0,0,0,0.12)) therefore stacks several times per pixel and drags the warm
+// fills dark: measured on the v20 surface at z4.5, deepest-red Philadelphia
+// composited to (35,5,9) instead of ~(149,23,39), and the rendered warm-area share
+// of Philadelphia County collapsed to 0.27 against a data truth of 0.85 (Cook
+// 0.16 vs 0.32). Dropping the outline alone restores 0.66 / 0.29 — the tiles and
+// the data were never the problem, the compositing was.
+//
+// Measured zoom dependence (Philadelphia County, outline on vs off, labels off,
+// water pixels excluded): z4.5 0.267/0.660, z5 0.467/0.670, z6 0.617/0.627,
+// z7 0.646/0.653, z8 0.654/0.655, z9 0.653/0.654. The damage is confined to the
+// zooms where polygons are sub-pixel and is gone by z6, so the outline is held
+// fully transparent through z7 (where it buys nothing) and ramped back to its
+// metro value by z9 (where it delineates block groups and metro captures are the
+// unchanged control).
+const OUTLINE_EXPR = ["interpolate", ["linear"], ["zoom"],
+                      8, "rgba(0,0,0,0)", 10, "rgba(0,0,0,0.12)"];
+// Same compositing logic for the special-area hatch overlay, whose outline is the
+// MapLibre default (opaque black, since fill-color is unset) — structurally the
+// same low-zoom darkening. Interpolating to opaque black by z9 keeps the metro
+// appearance byte-identical to today.
+const SPECIAL_OUTLINE_EXPR = ["interpolate", ["linear"], ["zoom"],
+                              8, "rgba(0,0,0,0)", 10, "rgba(0,0,0,1)"];
+
+// Fill alpha is intentionally invariant across zoom and geography. A value must
+// keep the same visual strength while the map changes only its boundary detail.
+// In particular, sparse rural cells must not fade toward the basemap and then
+// regain color as the reader zooms in.
+const OPACITY_FULL = 0.90;
+
+function opacityExpr(key, alpha, revealTractFallback = false) {
+  const base = alpha == null ? 1 : alpha;
+  const full = OPACITY_FULL * base;
+  if (!revealTractFallback || !key) return full;
+  // In the block-group detail lane, any cell with no publishable local rate is
+  // transparent so the same-estimand parent-tract value remains visible below.
+  return ["case",
+    ["!", hasValueExpr(key)], 0,
+    full,
+  ];
+}
+
+// ---- per-cell PROVENANCE DISCLOSURE ---------------------------------------
+// Every honesty signal on this surface used to live inside a popup, which means
+// it reached the readers who already suspected something and nobody else: a
+// benchmark-imputed county and a directly-reported one painted identically, so
+// the map itself never disclosed the difference. These two classes now mark the
+// map at every zoom, for whichever layer is showing.
+//
+//   IMPUTED (bit 0)          the agency covering this cell filed nothing usable,
+//                            so most of its counts were imputed from the state
+//                            benchmark. 2.6% of block groups.
+// 01 computes the codes and 05 stamps their definitions, wording and footprint
+// into the snapshot, so this file renders the class and never invents a
+// description of it.
+const PV_IMPUTED = 1;
+
+function provenanceCodes() { return (SNAP.provenance && SNAP.provenance.codes) || {}; }
+function provenanceBit(which) {
+  const c = provenanceCodes();
+  if (which === "imputed") return c.imputed || PV_IMPUTED;
+  return 0;
+}
+
+// Filter for the optional special-area hatch. Classification is metadata, not a
+// publication gate: the underlying rate keeps its normal choropleth colour.
+function specialCellExpr(key) {
+  return ["==", ["to-number", ["get", SNAP.special_use_flag_key]], 1];
+}
+function specialFilter(key) { return specialCellExpr(key); }
+function isSpecialFeature(p, key) {
+  return +(p && p[SNAP.special_use_flag_key]) === 1;
+}
+
+// ---- "% of people above this line" (F-01) ---------------------------------
+// Area-weighted pixel sampling misleads: at index 100 the default layer is above
+// the national average on 11.3% of the LAND but for 34.2% of the PEOPLE, and on
+// total density's p90 stop the gap is 7.9% of land vs 84.9% of people. The eye
+// reads land; the question a reader is asking is about people. The shares are
+// computed by 01 (population and land area, per layer, at every break) and ride
+// in `stats[key].pct_above` — nothing here is derived from the tiles.
+//
+// FAILS CLOSED for index layers: the shares are labelled with the break they were
+// computed at, so if the build's break set is not byte-identical to the set this
+// viewer paints with, the readout is DROPPED rather than attached to the wrong
+// line.
+function pctAbove(key) {
+  const s = STATS[key];
+  const pa = s && s.pct_above;
+  if (!pa || !Array.isArray(pa.people) || !Array.isArray(pa.breaks)) return null;
+  if (!isDensity(key)) {
+    const declared = SNAP.index_breaks;
+    const same = a => Array.isArray(a) && a.length === INDEX_BREAKS.length
+                      && a.every((v, i) => +v === INDEX_BREAKS[i]);
+    if (!same(declared) || !same(pa.breaks)) return null;
+  }
+  return pa;
+}
+
+// Hover text for one break/stop: both answers, so the land reading a reader takes
+// off the screen is always next to the population one.
+function pctTitle(pa, i, valueText) {
+  if (!pa || pa.people[i] == null) return "";
+  const land = pa.land && pa.land[i] != null ? `, ${fmt(pa.land[i], 1)}% of the land` : "";
+  return `Above ${valueText}: ${fmt(pa.people[i], 1)}% of people${land}`;
+}
+
+// Hide value-positioned tick labels that would overprint their neighbour. The
+// density ramp's stops are per-layer, so on a sparse offense two stops can land a
+// few percent apart on the bar; dropping a label that cannot be read is honest,
+// silently overprinting two numbers is not.
+//
+// Widths are MEASURED after layout rather than estimated from character counts —
+// an estimate is wrong by a few px and that is exactly the margin these decisions
+// turn on. `rows` are the parallel tick rows (values, then people-share) whose
+// children share an index; a tick is kept only if the union of its boxes clears
+// everything already kept. Priority: the two ends (which carry the clamp
+// semantics), then p90 (where the ramp turns warm), then the rest.
+function pruneTicks(rows, priority) {
+  const first = rows[0];
+  if (!first || !first.children.length) return [];
+  const n = first.children.length;
+  const box = i => {
+    let l = Infinity, r = -Infinity;
+    rows.forEach(row => {
+      const el = row && row.children[i];
+      if (!el) return;
+      const b = el.getBoundingClientRect();
+      l = Math.min(l, b.left); r = Math.max(r, b.right);
+    });
+    return [l, r];
+  };
+  const boxes = [];
+  for (let i = 0; i < n; i++) boxes.push(box(i));
+  // Panel not laid out (zero-width boxes): keep everything rather than prune blind.
+  if (!boxes.some(([l, r]) => r > l)) return [...Array(n).keys()];
+  const kept = [];
+  priority.forEach(i => {
+    if (i < 0 || i >= n || kept.includes(i)) return;
+    const [a, b] = boxes[i];
+    if (!kept.some(j => a < boxes[j][1] + 3 && boxes[j][0] < b + 3)) kept.push(i);
+  });
+  for (let i = 0; i < n; i++) {
+    if (kept.includes(i)) continue;
+    rows.forEach(row => { if (row && row.children[i]) row.children[i].style.display = "none"; });
+  }
+  return kept.sort((x, y) => x - y);
+}
+
+// One absolutely-positioned tick span, pinned at the ends so it stays in the panel.
+function tickSpan(text, pct, i, last, title) {
+  const cls = i === 0 ? ' class="first"' : (i === last ? ' class="last"' : "");
+  const t = title ? ` title="${title}"` : "";
+  return `<span${cls}${t} style="left:${pct.toFixed(2)}%">${text}</span>`;
+}
+
+function setLayer(key) {
+  // A popup describes the layer that produced it. Closing on every layer switch
+  // makes it impossible for a Total card to survive over Murder, even when the
+  // dropdown changes faster than the new tiles repaint.
+  dismissPopup();
+  CURRENT = key;
+  const dens = isDensity(key);
+  // The tract layer remains underneath block-group detail. A valid block-group
+  // value covers it; an ordinary block group whose denominator cannot support a
+  // local rate is transparent and reveals the parent-tract value. Zooming in
+  // therefore adds detail without turning a coarse valid estimate into a grey
+  // hole. Declared tract layers still render tracts alone.
+  const active = sourceForLayer(key);
+  activeGeometryLane = active;
+  const other = active === "tract" ? "bg" : "tract";
+  const fillId = GEOM[active].fill;
+  if (active === "bg") {
+    map.setPaintProperty(TRACT_LAYER_ID, "fill-color", colorExpr(key));
+    map.setPaintProperty(TRACT_LAYER_ID, "fill-opacity", opacityExpr(key));
+    map.setLayoutProperty(TRACT_LAYER_ID, "visibility", "visible");
+    map.setPaintProperty(LAYER_ID, "fill-color", colorExpr(key));
+    map.setPaintProperty(LAYER_ID, "fill-opacity", opacityExpr(key, null, true));
+    map.setLayoutProperty(LAYER_ID, "visibility", "visible");
+  } else {
+    map.setPaintProperty(fillId, "fill-color", colorExpr(key));
+    map.setPaintProperty(fillId, "fill-opacity", opacityExpr(key));
+    map.setLayoutProperty(fillId, "visibility", "visible");
+    map.setLayoutProperty(GEOM[other].fill, "visibility", "none");
+  }
+  // Special-area overlay filter on the active geometry; the toggle governs which
+  // (only the active) special layer is actually revealed.
+  map.setFilter(GEOM[active].special, specialFilter(key));
+  applySpecialVisibility();
+  // Force every already-rendered tile to re-evaluate the new fill expression now
+  // (fast switches between the index ramp and the density ramp can otherwise leave
+  // a stale-colored patch until the next interaction).
+  if (map.style && map.isStyleLoaded()) map.triggerRepaint();
+
+  // Legend: bar, ticks and people-share readout, all built from the paint
+  // expression this layer actually holds. Density stops are per-layer
+  // percentiles; index ticks are the FIXED break values, identical on every index
+  // layer. Both families position every label at its true log position on the bar,
+  // so band width on the bar IS band width on the map.
+  const s = STATS[key];
+  const bar = document.getElementById("legend-bar");
+  const ticks = document.getElementById("legend-ticks");
+  const pctRow = document.getElementById("legend-pct-row");
+  const pctLine = document.getElementById("legend-pct");
+  const pa = pctAbove(key);
+  bar.className = "bar " + (dens ? "density" : "index");
+  ticks.className = "ticks fixed";
+  if (dens) {
+    // Density stops are area-weighted, so the low stops sit far below 1/sq mi
+    // (total density p10 0.0019, p50 0.0345 at the shipped precision). A fixed
+    // 0-1 dp would print several of them as "0", so precision follows magnitude.
+    const logs = densityLogStops(s);
+    const values = densityStopValues(s);
+    const last = logs.length - 1;
+    const pcts = logs.map((_, i) => densityLegendPct(logs, i));
+    const colors = densityColors(s);
+    // The bar is the paint ramp: same colors and same log positions.
+    bar.style.background = "linear-gradient(90deg, " +
+      colors.map((c, i) => `${c} ${pcts[i].toFixed(2)}%`).join(", ") + ")";
+    const texts = values.map((v, i) =>
+      (i === 0 ? "≤" : (i === last ? "≥" : "")) + fmt(v, densTickDp(v)));
+    ticks.innerHTML = values
+      .map((v, i) => tickSpan(texts[i], pcts[i], i, last, pctTitle(pa, i, fmt(v, densTickDp(v)))))
+      .join("");
+    // Population and land shares remain available on each tick's title. Keeping
+    // them out of the visible legend prevents a second row of competing numbers.
+    pctRow.style.display = "none";
+    pctRow.innerHTML = "";
+    pctLine.innerHTML = "";
+    const middle = Math.floor(last / 2);
+    pruneTicks([ticks], [0, last, middle, Math.floor(middle / 2), Math.ceil((middle + last) / 2)]);
+    document.getElementById("legend-note").innerHTML =
+      'Expected offenses per land square mile. Green is lower; red is higher.' +
+      legendFooterHTML(key, true);
+  } else {
+    // Paint the bar from the same fixed breaks, at the same log positions the map
+    // interpolates over, so a color read off the bar is the value on the map. Ticks
+    // sit under their own break rather than being spread evenly: the visual width
+    // of a band IS its share of the log range.
+    const segs = INDEX_BREAKS.map((v, i) => `${INDEX_RAMP[i]} ${indexLegendPct(v).toFixed(2)}%`);
+    bar.style.background = `linear-gradient(90deg, ${segs.join(", ")})`;
+    const last = INDEX_BREAKS.length - 1;
+    ticks.innerHTML = INDEX_BREAKS.map((v, i) => {
+      const label = (i === 0 ? "≤" : (i === last ? "≥" : "")) + fmt(v, v < 100 && v % 1 ? 1 : 0);
+      return tickSpan(label, indexLegendPct(v), i, last, pctTitle(pa, i, fmt(v, v % 1 ? 1 : 0)));
+    }).join("");
+    pruneTicks([ticks], [0, last, INDEX_BREAKS.indexOf(100), INDEX_BREAKS.indexOf(800), INDEX_BREAKS.indexOf(25), INDEX_BREAKS.indexOf(3200)]);
+    // The index scale is fixed and its ticks are tight (75 / 100 / 133 sit ~7% of
+    // the bar apart), so the per-break shares live on the tick hover and only the
+    // ONE line that carries the misread — the neutral break — is spelled out.
+    pctRow.style.display = "none";
+    pctRow.innerHTML = "";
+    pctLine.innerHTML = "";
+    document.getElementById("legend-note").innerHTML =
+      '100 is the U.S. average. Blue is lower; red is higher.' +
+      legendFooterHTML(key, false);
+  }
+  updateMeta(key);
+}
+
+// What the hatched overlay actually selects on the ACTIVE layer, for the legend
+// key. Per-offense layers hatch the per-offense estimate modes special_use /
+// vehicle_denominator_invalid. Aggregate and total layers hatch the block-group
+// special-use flag, which ALSO covers non-residential cells — 549 of its 686 block
+// groups — so calling all of them "special-use" on those layers is wrong.
+function hatchKeyText(key) {
+  return "Special-use area";
+}
+
+// Legend footer shared by both ramp families: what the greys and the textures
+// mean, and — separately — that water is not one of them.
+//
+// WATER IS NOT A DATA CLASS, and the legend never used to say so. The grey fill
+// is a real cell whose value is withheld; water is the basemap showing through
+// where no cell exists at all. Those are opposite facts that looked similar on a
+// dark map, and a reader who read a lake as "suppressed" was reading a coverage
+// gap that is not there.
+function legendFooterHTML(key, dens) {
+  return (
+    '<div style="margin-top:7px">' +
+      '<span class="legend-key-row"><span class="key nodata"></span> ' +
+      (dens ? "No density published" : "No value published") + '</span>' +
+      ' &nbsp; <span class="legend-key-row"><span class="key special"></span> ' + hatchKeyText(key) + '</span>' +
+    '</div>'
+  );
+}
+
+// Header meta line. Geography follows the ACTIVE LANE (murder and rape render
+// census tracts, and the line used to say "block groups" while tracts were on
+// screen), and the coverage phrase is counted from the snapshot's own state list
+// rather than asserted.
+function updateMeta(key) {
+  const st = SNAP.states || [];
+  const hasDC = st.includes("11");
+  const n = st.length - (hasDC ? 1 : 0);
+  const contiguous = !st.includes("02") && !st.includes("15");
+  const where = st.length
+    ? `${n}${contiguous ? " contiguous" : ""} state${n === 1 ? "" : "s"}${hasDC ? " + DC" : ""}`
+    : null;
+  const tract = sourceForLayer(key) === "tract";
+  const overview = isTractOverview(key);
+  const units = tract ? SNAP.n_tract_features : SNAP.n_features;
+  const what = tract ? "census tracts" : "block groups";
+  // NAME THE LAYER, always. The panel used to state the year and the geography
+  // but never what was actually being painted, so a screenshot of the map — which
+  // is how most of these views travel — carried no record of which of the 30
+  // layers it showed. The dropdowns say it only while they are on screen.
+  const d = defByKey(key);
+  const metaEl = document.getElementById("meta");
+  metaEl.textContent =
+    [d ? d.label : key, what, where].filter(Boolean).join(" · ");
+  metaEl.title = overview
+    ? "Census-tract overview. Zoom in for block-group detail."
+    : tract
+    ? "Displayed at census-tract scale."
+    : "Displayed at census-block-group scale.";
+  const geoNote = document.getElementById("geo-note");
+  if (geoNote) {
+    geoNote.innerHTML = overview
+      ? "National view uses census tracts. Zoom in for block-group detail."
+      : tract
+      ? "Displayed at census-tract scale."
+      : "Displayed at census-block-group scale. Murder, rape, and harm-weighted burden use census tracts.";
+  }
+  updateVintage();
+}
+
+// Always-visible data vintage (chrome item). Authored by 05 from the build that
+// produced the tiles, not composed here, so the panel can never claim a freshness
+// the snapshot does not have.
+function updateVintage() {
+  const el = document.getElementById("vintage");
+  if (!el) return;
+  const v = SNAP.data_vintage;
+  if (!v) {   // older snapshot: say the year we do know rather than nothing
+    el.innerHTML = `<b>${SNAP.data_year}</b> risk edition`;
+    return;
+  }
+  el.innerHTML = `<b>${v.reference_year}</b> risk edition · published ` +
+    `<b>${v.snapshot_built_date || ""}</b>` +
+    (v.geometry_vintage ? ` · neighborhood boundaries as of ${v.geometry_vintage}` : "");
+  el.title = v.detail || "";
+}
+
+// Show / hide the hatched special-area overlay per the include toggle. Only the
+// ACTIVE geometry's special layer is ever revealed; the other stays hidden.
+function applySpecialVisibility() {
+  const active = sourceForLayer(CURRENT);
+  const other = active === "tract" ? "bg" : "tract";
+  map.setLayoutProperty(GEOM[active].special, "visibility", INCLUDE_SU ? "visible" : "none");
+  map.setLayoutProperty(GEOM[other].special, "visibility", "none");
+}
+
+// Decimal places for a density legend tick: enough to distinguish the stop from
+// zero at the bottom of the ramp, none once the value is comfortably above 1.
+// The bottom stops sit at the field's precision (total density p10 0.0019, murder
+// 0.0001), so a tick below 0.1 needs all four digits — 2dp printed several stops
+// as "0.00" once the density field stopped being 2dp itself.
+function densTickDp(v) {
+  const a = Math.abs(+v);
+  if (!(a > 0)) return 0;
+  return a < 0.1 ? 4 : a < 1 ? 3 : a < 10 ? 2 : a < 100 ? 1 : 0;
+}
+
+function fmt(v, dp = 0) {
+  if (v === null || v === undefined || v === "" || Number.isNaN(+v)) return null;
+  return (+v).toLocaleString(undefined, { maximumFractionDigits: dp });
+}
+
+// Census reserves tract codes 99xxxx for water. The tiles do not carry land area,
+// so the interaction guard uses the two attributes they do carry: a 99xxxx GEOID
+// AND zero population. Either condition alone would suppress legitimate places.
+function isWaterCell(p) {
+  if (!p || +p.pop !== 0) return false;
+  const geoid = String(p.block_group_geoid || p.tract_id ||
+    (SNAP && SNAP.tract_feature_id_property && p[SNAP.tract_feature_id_property]) || "");
+  return geoid.length >= 11 && geoid.slice(5, 7) === "99";
+}
+
+// Data-batch compatibility: when explicit popup denominator keys land, 05 can
+// declare them in either map. Until then a nonzero count/rate pair reconstructs
+// the same exposure base algebraically. Tract-baked rate + BG count are different
+// supports, so that pair is deliberately never used for reconstruction.
+function popupTileKey(mappingNames, sfx, fallbacks) {
+  for (const name of mappingNames) {
+    const mapping = SNAP && SNAP[name];
+    if (!mapping) continue;
+    if (typeof mapping === "string") return mapping.replace("{offense}", sfx);
+    if (mapping[sfx]) return mapping[sfx];
+    const offense = SNAP.offenses.find(o => o.key === sfx);
+    if (offense && mapping[offense.id]) return mapping[offense.id];
+  }
+  return fallbacks.find(Boolean) || null;
+}
+
+function exposureBaseFor(p, sfx, rate, count, tractBakedKey) {
+  if (tractBakedKey && p[tractBakedKey] != null && Number.isFinite(+p[tractBakedKey]) && +p[tractBakedKey] > 0) {
+    return +p[tractBakedKey];
+  }
+  const key = popupTileKey(
+    ["popup_exposure_base_keys", "exposure_base_keys", "exposure_base_key"],
+    sfx,
+    ["xb_" + sfx, "eb_" + sfx]
+  );
+  if (key && p[key] != null && Number.isFinite(+p[key]) && +p[key] > 0) return +p[key];
+  if (!tractBakedKey && +rate > 0 && +count >= 0) return (+count * 100000) / +rate;
+  return null;
+}
+
+function sourceModeFor(p, sfx) {
+  const key = popupTileKey(
+    ["popup_source_mode_keys", "source_mode_keys", "source_mode_key"],
+    sfx,
+    ["sm_" + sfx]
+  );
+  if (!key || p[key] == null) return null;
+  const raw = p[key];
+  if (typeof raw === "string") return raw;
+  const labels = (SNAP && (SNAP.source_mode_labels || SNAP.popup_source_mode_labels)) || {};
+  return labels[String(raw)] || null;
+}
+
+// Decimal places for a density VALUE in a popup. 2dp everywhere it is enough, and
+// the field's full precision (from the snapshot) only below 0.1, where 2dp printed
+// a real published density as "0" once the density field stopped being 2dp itself.
+// So a hotspot still reads 6,184.52 and a rural cell reads 0.0019 rather than 0 —
+// without ever printing more digits than the field carries.
+function densValDp(v) {
+  const dp = SNAP && Number.isInteger(SNAP.density_dp) ? SNAP.density_dp : 2;
+  const a = Math.abs(+v);
+  return (a > 0 && a < 0.1) ? dp : Math.min(2, dp);
+}
+
+// Disclaimer caption: the active offense's methodology text, or the general note
+// for aggregate layers (no single offense).
+
+function popupGeoid(p, isTract) {
+  return String(isTract
+    ? (p[SNAP.tract_feature_id_property] || p.tract_id || "")
+    : (p.block_group_geoid || ""));
+}
+
+function popupPlace(p, geoid) {
+  const county = SNAP.county_names && SNAP.county_names[geoid.slice(0, 5)];
+  return `Location · ${county || "Unknown county"}${p.st ? ", " + p.st : ""}`;
+}
+
+// Text tint for the popup number: nearest ramp stop for the index value, so the
+// big number reads in the same color language as the map. Density and null get
+// the default ink.
+function jsRampColor(v) {
+  if (v == null || !Number.isFinite(+v)) return "";
+  const lv = Math.log10(Math.max(+v, INDEX_BREAKS[0]));
+  let best = 0, bestD = Infinity;
+  INDEX_BREAKS.forEach((b, i) => {
+    const d = Math.abs(Math.log10(b) - lv);
+    if (d < bestD) { bestD = d; best = i; }
+  });
+  return INDEX_RAMP[best];
+}
+
+// Density counterpart of jsRampColor: nearest log-stop color from this layer's
+// own density ramp, so the popup number reads in the same green-to-red language
+// as the map and the legend, instead of the plain white text that used to force a
+// reader to leave the popup and re-locate the number on the legend themselves.
+function densityRampColor(key, v) {
+  const s = STATS && STATS[key];
+  if (v == null || !Number.isFinite(+v) || !s) return "";
+  const logs = densityLogStops(s);
+  const lv = Math.log10(Math.max(+v, densityFloor()));
+  let best = 0, bestD = Infinity;
+  logs.forEach((x, i) => {
+    const d = Math.abs(x - lv);
+    if (d < bestD) { bestD = d; best = i; }
+  });
+  return densityColors(s)[best];
+}
+
+/*
+  Popup chip — the card's only disclosure, and it is a SOURCE fact, never doubt.
+  Mapping over the existing per-offense fields (aggregates take the
+  highest-priority state across member offenses):
+    estimated bit, lp nonzero or missing      -> ESTIMATED
+    lp=0 (complete report), no bit            -> no chip
+  The title attribute carries the one plain sentence.
+*/
+function chipFor(p, key) {
+  const sfxs = memberSuffixes(key);
+  const codes = sfxs.map(sfx => {
+    const raw = p["lp_" + sfx];
+    return raw == null || !Number.isFinite(+raw) ? null : +raw;
+  });
+  const pvHas = names => sfxs.some(sfx => {
+    const raw = p["pv_" + sfx];
+    if (raw == null || !Number.isFinite(+raw)) return false;
+    return names.some(n => { const b = provenanceBit(n); return b && (+raw & b) === b; });
+  });
+  if (pvHas(["imputed"]) || codes.some(c => c == null || c !== 0)) {
+    return { label: "Estimated", title: "Underlying local reporting is incomplete; this risk level uses reviewed reporting history." };
+  }
+  return null;
+}
+
+
+// The card. Three elements, no sentences: place, the number, one muted context
+// line — plus a one-or-two-word chip when (and only when) something needs
+// saying. The pinned card adds a compact per-offense grid and the GEOID.
+function popupHTML(p) {
+  const def = defByKey(CURRENT);
+  const label = def ? def.short_label || def.label : CURRENT;
+  const dens = isDensity(CURRENT);
+  const tractFallback = p.__display_support === "tract_fallback";
+  const isTract = sourceForLayer(CURRENT) === "tract" || tractFallback;
+  const overview = isTractOverview(CURRENT) && !tractFallback;
+  const geoid = popupGeoid(p, isTract);
+  const value = layerVal(p, CURRENT);
+  const ok = value != null && Number.isFinite(+value);
+
+  const chip = overview ? null : chipFor(p, CURRENT);
+  const chipHTML = chip
+    ? `<span class="pp2-chip" title="${chip.title}">${chip.label}</span>` : "";
+  // The chip's one-sentence explanation used to live only in `title`, which does
+  // not exist on a tap/touch popup — the majority-plausible way this map gets
+  // viewed. Once a card is pinned (tap or click), show the same sentence as
+  // visible text rather than leaving touch readers with a bare "Estimated" word.
+  const chipNote = (chip && popupPinned)
+    ? `<div class="pp2-chip-note">${chip.title}</div>` : "";
+
+  const valueText = ok ? fmt(value, dens ? densValDp(value) : 0) : "&mdash;";
+  const tint = ok ? ` style="color:${dens ? densityRampColor(CURRENT, value) : jsRampColor(value)}"` : "";
+  const context = !ok ? "No value at this location"
+    : dens ? `${label} &middot; per sq mi`
+    : `${label}${overview ? " &middot; tract overview" : tractFallback ? " &middot; census tract fallback" : ""} &middot; ${(+value / 100).toFixed(1)}&times; U.S. average`;
+
+  let grid = "";
+  if (popupPinned && overview) {
+    grid = `<div class="pp2-geoid">Census tract ${geoid} &middot; Zoom in for block-group details</div>`;
+  } else if (popupPinned) {
+    const rows = [["Murder", p.ipt_mur], ["Rape", p.ipt_rap], ["Robbery", p.ip_rob],
+      ["Aggravated assault", p.ip_agg], ["Burglary", p.ip_bur], ["Larceny", p.ip_lar],
+      ["Motor vehicle theft", p.ip_mvt]]
+      .map(([n, v]) => `<div>${n}</div><div>${v != null && Number.isFinite(+v) ? fmt(v, 0) : "&mdash;"}</div>`)
+      .join("");
+    grid = `<details class="pp2-details"><summary>Details</summary>` +
+      `<div class="pp2-grid">${rows}</div>` +
+      `<div class="pp2-geoid">${geoid ? "Census " + (isTract ? "tract " : "block group ") + geoid : ""}</div></details>`;
+  }
+
+  return `<div class="pp2-place">${popupPlace(p, geoid)}${chipHTML}</div>` +
+    `<div class="pp2-value"${tint}>${valueText}</div>` +
+    `<div class="pp2-context">${context}</div>` + chipNote + grid;
+}
+
+// offense long name -> short suffix used in tile keys (mvt, mur, ...).
+function offSuffix(offense) {
+  const m = {
+    murder: "mur", rape: "rap", robbery: "rob", aggravated_assault: "agg",
+    burglary: "bur", larceny: "lar", motor_vehicle_theft: "mvt",
+  };
+  return m[offense];
+}
+
+// ---- two-axis selector (crime type x measure) ----------------------------
+// EXACTLY TWO dropdowns, both always present. Every crime type carries the same
+// measure axis; Total simply declares one extra measure (`harm`, the severity-
+// weighted total). A third "Other total views" select used to appear only for
+// Total, with a "Standard total selected" placeholder and two entries that were
+// verbatim duplicates of the Personal and Property crime types; it is gone, along
+// with the `alt` override it drove. The equal-offense total is still in the tiles
+// and in the snapshot's layer catalogue, just not offered as a view.
+let SEL = { crimeType: null, measure: null };
+
+function crimeTypeDef(id) { return SNAP.crime_types.find(c => c.id === id); }
+function measureDef(id) { return SNAP.measures.find(m => m.id === id); }
+
+// Populate the crime-type dropdown once; wire change handlers; set defaults.
+function buildSelectors() {
+  const cSel = document.getElementById("crime-sel");
+  SNAP.crime_types.forEach(c => {
+    const o = document.createElement("option");
+    o.value = c.id; o.textContent = c.label;
+    cSel.appendChild(o);
+  });
+  const hashLayer = SNAP.crime_types.some(c => c.id === INITIAL_HASH_STATE.layer)
+    ? INITIAL_HASH_STATE.layer : null;
+  SEL.crimeType = hashLayer || SNAP.default_crime_type || SNAP.crime_types[0].id;
+  const hashMeasure = SNAP.measures.some(m => m.id === INITIAL_HASH_STATE.measure)
+    ? INITIAL_HASH_STATE.measure : null;
+  SEL.measure = hashMeasure || SNAP.default_measure || "primary";
+  cSel.value = SEL.crimeType;
+
+  cSel.addEventListener("change", () => {
+    SEL.crimeType = cSel.value;
+    // Keep the chosen measure if the new crime type supports it, else fall back.
+    const ct = crimeTypeDef(SEL.crimeType);
+    if (!ct.measures[SEL.measure]) SEL.measure = "primary";
+    refreshMeasureOptions();
+    applySelection();
+  });
+  document.getElementById("measure-sel").addEventListener("change", () => {
+    SEL.measure = document.getElementById("measure-sel").value;
+    applySelection();
+  });
+
+  refreshMeasureOptions();
+  applySelection();
+}
+
+// Rebuild the MEASURE dropdown to only the measures the current crime type has.
+function refreshMeasureOptions() {
+  const ct = crimeTypeDef(SEL.crimeType);
+  const mSel = document.getElementById("measure-sel");
+  mSel.innerHTML = "";
+  SNAP.measures.forEach(m => {
+    if (!ct.measures[m.id]) return;             // this crime type lacks this measure
+    const o = document.createElement("option");
+    o.value = m.id; o.textContent = m.label;
+    mSel.appendChild(o);
+  });
+  if (!ct.measures[SEL.measure]) SEL.measure = mSel.options[0].value;
+  mSel.value = SEL.measure;
+}
+
+// Sentence-boundary trim for the measure explainer. Truncating at the FIRST
+// period (the old behavior) silently dropped the disclosure sentence for Murder
+// and Rape, whose caveat ("...estimated and drawn at census-tract scale",
+// "Rape is heavily under-reported...") is authored as the SECOND sentence, not
+// the first — so it was computed into the snapshot and then thrown away before
+// any reader saw it. Keep the first sentence always, plus any later sentence
+// that carries the estimated / tract-scale / under-reported disclosure.
+function explainText(full) {
+  const sentences = full.split(/(?<=\.)\s+/).filter(Boolean);
+  if (!sentences.length) return full;
+  return sentences
+    .filter((s, i) => i === 0 || /estimated|census-tract|under-reported/i.test(s))
+    .join(" ");
+}
+
+// Resolve the current selection to a layer key and switch the map + explanation.
+function applySelection() {
+  const ct = crimeTypeDef(SEL.crimeType);
+  const key = ct.measures[SEL.measure];
+  const m = measureDef(SEL.measure);
+  // Pairing-specific wording: each crime type's measure_explain names the actual
+  // denominator and caveats for that crime x measure combination.
+  const explain = String(ct.measure_explain[SEL.measure] || "");
+  document.getElementById("measure-explain").textContent = explainText(explain);
+  setLayer(key);
+  syncHashState();
+}
+
+function syncHashState() {
+  if (applyingHashState || !SEL.crimeType || !SEL.measure) return;
+  const c = map.getCenter();
+  const q = new URLSearchParams({
+    center: `${c.lng.toFixed(5)},${c.lat.toFixed(5)}`,
+    zoom: map.getZoom().toFixed(2),
+    layer: SEL.crimeType,
+    measure: SEL.measure,
+  });
+  history.replaceState(null, "", `#${q}`);
+}
+
+function restoreHashState() {
+  if (!SNAP) return;
+  const state = parseHashState();
+  applyingHashState = true;
+  if (state.center || state.zoom != null) {
+    map.jumpTo({ center: state.center || map.getCenter(), zoom: state.zoom == null ? map.getZoom() : state.zoom });
+  }
+  const ct = SNAP.crime_types.find(c => c.id === state.layer);
+  if (ct) {
+    SEL.crimeType = ct.id;
+    SEL.measure = ct.measures[state.measure] ? state.measure : (SNAP.default_measure || "primary");
+    document.getElementById("crime-sel").value = SEL.crimeType;
+    refreshMeasureOptions();
+    document.getElementById("measure-sel").value = SEL.measure;
+    applySelection();
+  }
+  applyingHashState = false;
+}
+
+const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, maxWidth: "340px" });
+
+function dismissPopup() {
+  popupPinned = false;
+  popup.remove();
+  map.getCanvas().style.cursor = "";
+}
+
+function setupPanel() {
+  const panel = document.getElementById("panel");
+  const button = document.getElementById("panel-toggle");
+  const mobile = window.matchMedia("(max-width: 700px)");
+  let userSetState = false;
+  const render = collapsed => {
+    panel.classList.toggle("is-collapsed", collapsed);
+    button.setAttribute("aria-expanded", String(!collapsed));
+    button.textContent = collapsed ? "Show controls" : "Hide";
+    // MapLibre needs a resize notification when the overlay's footprint changes,
+    // especially after mobile rotation and browser-chrome resizing.
+    requestAnimationFrame(() => map.resize());
+  };
+  render(mobile.matches);  // mobile defaults collapsed; desktop defaults open
+  button.addEventListener("click", () => {
+    userSetState = true;
+    render(!panel.classList.contains("is-collapsed"));
+  });
+  mobile.addEventListener("change", e => {
+    if (!e.matches || !userSetState) render(e.matches);
+  });
+}
+
+function setupSearch() {
+  const input = document.getElementById("place-search");
+  const results = document.getElementById("search-results");
+  const status = document.getElementById("search-status");
+  let timer = null;
+  let controller = null;
+  let choices = [];
+
+  const clear = () => { results.innerHTML = ""; choices = []; };
+  const choose = item => {
+    const lon = +item.lon, lat = +item.lat;
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) return;
+    input.value = item.display_name;
+    clear();
+    status.textContent = `Showing ${item.display_name}`;
+    if (Array.isArray(item.boundingbox) && item.boundingbox.length === 4) {
+      const [south, north, west, east] = item.boundingbox.map(Number);
+      map.fitBounds([[west, south], [east, north]], { padding: 70, maxZoom: 12, duration: 800 });
+    } else {
+      map.flyTo({ center: [lon, lat], zoom: 11, duration: 800 });
+    }
+  };
+  const search = async query => {
+    controller?.abort();
+    controller = new AbortController();
+    status.textContent = "Searching…";
+    try {
+      const url = "https://nominatim.openstreetmap.org/search?format=jsonv2&countrycodes=us&addressdetails=1&limit=5&q=" + encodeURIComponent(query);
+      const response = await fetch(url, { signal: controller.signal, headers: { "Accept-Language": "en-US,en" } });
+      if (!response.ok) throw new Error(`search returned ${response.status}`);
+      choices = await response.json();
+      results.innerHTML = "";
+      choices.forEach((item, i) => {
+        const li = document.createElement("li");
+        const button = document.createElement("button");
+        button.type = "button";
+        button.setAttribute("role", "option");
+        button.dataset.index = String(i);
+        button.textContent = item.display_name;
+        button.addEventListener("click", () => choose(item));
+        li.appendChild(button); results.appendChild(li);
+      });
+      status.textContent = choices.length ? `${choices.length} result${choices.length === 1 ? "" : "s"}` : "No US place or address found.";
+    } catch (err) {
+      if (err.name !== "AbortError") status.textContent = "Search is temporarily unavailable.";
+    }
+  };
+  input.addEventListener("input", () => {
+    clearTimeout(timer);
+    const query = input.value.trim();
+    if (query.length < 3) { controller?.abort(); clear(); status.textContent = ""; return; }
+    timer = setTimeout(() => search(query), 350);
+  });
+  input.addEventListener("keydown", e => {
+    if (e.key === "Enter" && choices.length) { e.preventDefault(); choose(choices[0]); }
+    if (e.key === "Escape") { clear(); input.blur(); }
+  });
+  document.addEventListener("click", e => {
+    if (!e.target.closest(".search-wrap")) clear();
+  });
+}
+
+function markFirstTilePaint() {
+  if (firstDataPaint || !CURRENT) return;
+  const fill = GEOM[sourceForLayer(CURRENT)].fill;
+  if (!map.getLayer(fill)) return;
+  let painted = false;
+  try { painted = map.queryRenderedFeatures({ layers: [fill] }).length > 0; }
+  catch (_) { return; }
+  if (!painted) return;
+  firstDataPaint = true;
+  const loading = document.getElementById("loading");
+  loading.classList.add("is-done");
+  loading.setAttribute("aria-label", "Crime map loaded");
+}
+
+async function init() {
+  setupPanel();
+  setupSearch();
+  SNAP = await (await fetch("snapshot.json?" + Date.now())).json();
+  STATS = SNAP.stats;
+  // The meta line is written by updateMeta() from setLayer, because the geography
+  // it names depends on which lane the active layer renders from.
+
+  // Methodology link. 05 renders docs/METHODOLOGY.md next to the map at stamp
+  // time and reports where; if a snapshot was stamped without it, drop the link
+  // rather than ship one that 404s.
+  const methodLink = document.getElementById("methodology-link");
+  if (SNAP.methodology && SNAP.methodology.published && SNAP.methodology.href) {
+    methodLink.href = SNAP.methodology.href;
+  } else {
+    methodLink.style.display = "none";
+  }
+
+  const suToggle = document.getElementById("su-toggle");
+  suToggle.checked = INCLUDE_SU;
+  suToggle.addEventListener("change", () => {
+    INCLUDE_SU = suToggle.checked;
+    applySpecialVisibility();
+  });
+
+  // Everything from here through the label overlay mutates the style, which
+  // requires the style JSON to be parsed — MapLibre throws "Style is not done
+  // loading" otherwise. The boot poll bounds its wait on isStyleLoaded(), which
+  // also tracks sprite/tile readiness and can stay false forever behind one hung
+  // sub-resource, so a forced attempt can reach this point before the style JSON
+  // itself is ready on a slow connection. The first addSource throws before any
+  // mutation lands, so the whole block is safe to retry when the style announces
+  // itself, instead of dying on the one-shot attempt.
+  try {
+    addStyleLayers();
+  } catch (err) {
+    if (!/not done loading/i.test(String(err && err.message))) throw err;
+    await new Promise(resolve => map.once("styledata", resolve));
+    addStyleLayers();
+  }
+
+  function addStyleLayers() {
+    // OpenFreeMap's dark style is a full vector style (background/water/landuse/
+    // buildings/roads/boundaries interleaved with symbol layers for water, road
+    // and place names — see tiles.openfreemap.org/styles/dark), not a "no labels"
+    // companion raster the way the old CARTO dark_nolabels basemap was. Every
+    // layer we add below is inserted with `beforeId: beforeLabels` so our
+    // choropleth, the water mask and the provenance overlays land ABOVE the
+    // style's physical layers (background/water/landuse/buildings/roads/rail/
+    // boundaries) but BELOW its place-name text — matching the old raster design,
+    // where roads etc. were baked faint into the basemap image under the fill and
+    // only city/neighbourhood labels were drawn on top. Naively using the FIRST
+    // symbol layer (`water_name`, which sits ahead of `building` and every road
+    // layer in this style's paint order) pulls road/building lines above the
+    // choropleth as harsh black strokes, so we target the OpenMapTiles `place`
+    // source-layer specifically instead, falling back to the first symbol layer
+    // for a schema this doesn't match.
+    const styleLayers = map.getStyle().layers || [];
+    const beforeLabels = (styleLayers.find(l => l["source-layer"] === "place") ||
+                           styleLayers.find(l => l.type === "symbol") || {}).id;
+
+    map.addSource(SOURCE, {
+      type: "vector",
+      url: "pmtiles://" + SNAP.tiles,
+      promoteId: "block_group_geoid",
+    });
+    map.addLayer({
+      id: LAYER_ID,
+      type: "fill",
+      source: SOURCE,
+      "source-layer": SNAP.tile_layer,
+      paint: {
+        "fill-color": "#3a4150",
+        "fill-opacity": opacityExpr(null),
+        "fill-outline-color": OUTLINE_EXPR,
+      },
+    }, beforeLabels);
+
+    // Special-area overlay: a muted hatched fill drawn on top of the choropleth.
+    // Hidden by default; the "Mark special-use areas" toggle reveals it. The
+    // hatch is generated client-side so no external sprite is required. The
+    // underlying choropleth value and colour are unchanged.
+    const hatch = makeHatchImage();
+    map.addImage("su-hatch", hatch, { pixelRatio: 2 });
+    map.addLayer({
+      id: SPECIAL_LAYER_ID,
+      type: "fill",
+      source: SOURCE,
+      "source-layer": SNAP.tile_layer,
+      layout: { visibility: "none" },
+      paint: {
+        "fill-pattern": "su-hatch",
+        "fill-opacity": 0.9,
+        "fill-outline-color": SPECIAL_OUTLINE_EXPR,
+      },
+      filter: ["==", ["get", "block_group_geoid"], "__none__"],
+    }, beforeLabels);
+
+    // --- Tract choropleth (murder / rape publish at census-tract support) ------
+    // A second vector source + fill/special pair, mirroring the block-group pair
+    // and reusing the same short tile keys, so the four murder/rape index layers can
+    // render from tract geometry with the same paint expressions. Both start hidden;
+    // setLayer reveals whichever geometry the active layer uses. Added here, before
+    // the water / label overlays, so those stay above all four choropleth layers.
+    map.addSource(TRACT_SOURCE, {
+      type: "vector",
+      url: "pmtiles://" + SNAP.tract_tiles,
+      promoteId: SNAP.tract_feature_id_property,
+    });
+    map.addLayer({
+      id: TRACT_LAYER_ID,
+      type: "fill",
+      source: TRACT_SOURCE,
+      "source-layer": SNAP.tract_tile_layer,
+      layout: { visibility: "none" },
+      paint: {
+        "fill-color": "#3a4150",
+        "fill-opacity": opacityExpr(null),
+        "fill-outline-color": OUTLINE_EXPR,
+      },
+    }, beforeLabels);
+    map.addLayer({
+      id: TRACT_SPECIAL_LAYER_ID,
+      type: "fill",
+      source: TRACT_SOURCE,
+      "source-layer": SNAP.tract_tile_layer,
+      layout: { visibility: "none" },
+      paint: {
+        "fill-pattern": "su-hatch",
+        "fill-opacity": 0.9,
+        "fill-outline-color": SPECIAL_OUTLINE_EXPR,
+      },
+      filter: ["==", ["get", SNAP.tract_feature_id_property], "__none__"],
+    }, beforeLabels);
+    // The tract fill is the coarse fallback underneath block-group detail. Layer
+    // insertion above places it later in the stack, so move it below the BG fill
+    // explicitly; this order is a rendering invariant, not an incidental add order.
+    map.moveLayer(TRACT_LAYER_ID, LAYER_ID);
+
+    // --- Water overlay (drawn ABOVE the choropleth, BELOW basemap labels) -----
+    // The block-group geometry is full-resolution TIGER, which is NOT shoreline-
+    // clipped: polygons extend to their legal boundary, which runs out into rivers
+    // and harbors (Manhattan is the worst case — water on three sides). Rather than
+    // clip every polygon to a coastline (fragile, heavy), we paint water on top so
+    // any edge that bleeds into water is visually masked. This is independent of
+    // which basemap sits underneath (the OpenFreeMap style's own `water` layer is
+    // BELOW our choropleth fill, so it can't mask the bleed) — re-drawn from the
+    // style's own OpenMapTiles vector source ABOVE the fill; `water` (ocean/
+    // harbor/lake fills) + `waterway` (river lines) match the dark theme. Uses
+    // beforeLabels like everything else so it can't paint over place names.
+    const styleSources = map.getStyle().sources;
+    const baseVec = styleSources["openmaptiles"]
+      ? "openmaptiles"
+      : Object.keys(styleSources).find(
+          (k) => styleSources[k].type === "vector"
+            && !(styleSources[k].url || "").startsWith("pmtiles"));
+    map.addLayer({
+      id: "water-fill",
+      type: "fill",
+      source: baseVec,
+      "source-layer": "water",
+      filter: ["==", ["geometry-type"], "Polygon"],
+      paint: { "fill-color": "#0c1118", "fill-opacity": 1, "fill-antialias": true },
+    }, beforeLabels);
+    map.addLayer({
+      id: "waterway-line",
+      type: "line",
+      source: baseVec,
+      "source-layer": "waterway",
+      minzoom: 9,
+      // Only mask genuine OPEN rivers/canals. Exclude buried/culverted channels
+      // (brunnel=tunnel) and minor streams/drains/ditches — drawing dark lines for
+      // those paints water across dry land (e.g. SF's culverted Islais/Mission
+      // creeks). Wide tidal rivers (Harlem R.) are class=river and stay.
+      filter: [
+        "all",
+        ["in", ["get", "class"], ["literal", ["river", "canal"]]],
+        ["!=", ["get", "brunnel"], "tunnel"],
+      ],
+      paint: {
+        "line-color": "#0c1118",
+        "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1, 12, 3, 15, 8],
+      },
+    }, beforeLabels);
+
+    // Place / road / water-name labels used to need a separate CARTO raster
+    // overlay ("dark_only_labels") because the old basemap was the `dark_nolabels`
+    // raster and had no text at all, and the CARTO *vector* tiles it would
+    // otherwise come from fail to decode in MapLibre 4.7.1's tile worker for a
+    // `place` layer. OpenFreeMap's dark style bakes working symbol layers
+    // (water_name, road names, place_*) directly into the style, so those now
+    // render natively — our layers sit beneath them via `beforeLabels` above —
+    // and the extra raster overlay would just duplicate text over itself.
+  }
+
+  // Build the two-axis selector now that the fill layers exist (buildSelectors ->
+  // applySelection -> setLayer, which sets paint properties on LAYER_ID).
+  buildSelectors();
+  window.addEventListener("hashchange", restoreHashState);
+
+  // One popup path for mouse hover and click/tap. A click pins the card; clicking
+  // anywhere without an active data feature dismisses it. Hover remains desktop-
+  // only so a synthetic mousemove following a touch cannot replace a pinned card.
+  const finePointer = window.matchMedia("(hover: hover) and (pointer: fine)");
+  const featureAtPoint = point => {
+    const active = sourceForLayer(CURRENT);
+    if (active === "tract") {
+      return map.queryRenderedFeatures(point, { layers: [TRACT_LAYER_ID] })[0] || null;
+    }
+    const bg = map.queryRenderedFeatures(point, { layers: [LAYER_ID] })[0] || null;
+    const bgProps = bg && (bg.properties || {});
+    const bgValue = bgProps ? layerVal(bgProps, CURRENT) : null;
+    if (bg && bgValue != null && Number.isFinite(+bgValue)) {
+      return bg;
+    }
+    const tract = map.queryRenderedFeatures(point, { layers: [TRACT_LAYER_ID] })[0] || null;
+    if (!tract) return bg;
+    return {
+      ...tract,
+      properties: { ...(tract.properties || {}), __display_support: "tract_fallback" },
+    };
+  };
+  const showFeaturePopup = (feature, lngLat, pin) => {
+    if (!feature) return false;
+    const p = feature.properties || {};
+    if (isWaterCell(p)) {
+      dismissPopup();
+      return false;
+    }
+    map.getCanvas().style.cursor = "pointer";
+    popupPinned = Boolean(pin);
+    popup.setLngLat(lngLat).setHTML(popupHTML(p)).addTo(map);
+    return true;
+  };
+  const showHoverPopup = e => {
+    if (popupPinned || !finePointer.matches) return;
+    showFeaturePopup(featureAtPoint(e.point), e.lngLat, false);
+  };
+  map.on("mousemove", LAYER_ID, showHoverPopup);
+  map.on("mousemove", SPECIAL_LAYER_ID, showHoverPopup);
+  map.on("mousemove", TRACT_LAYER_ID, showHoverPopup);
+  map.on("mousemove", TRACT_SPECIAL_LAYER_ID, showHoverPopup);
+  map.on("mouseleave", LAYER_ID, () => {
+    map.getCanvas().style.cursor = "";
+    if (!popupPinned) popup.remove();
+  });
+  map.on("mouseleave", SPECIAL_LAYER_ID, () => { map.getCanvas().style.cursor = ""; });
+  map.on("mouseleave", TRACT_LAYER_ID, () => {
+    map.getCanvas().style.cursor = "";
+    if (!popupPinned) popup.remove();
+  });
+  map.on("mouseleave", TRACT_SPECIAL_LAYER_ID, () => { map.getCanvas().style.cursor = ""; });
+
+  // MapLibre normalizes touch taps and pointer clicks into this event. The same
+  // BG-first, tract-fallback selection used by hover keeps the card tied to the
+  // value actually visible at that pixel.
+  map.on("click", e => {
+    if (!showFeaturePopup(featureAtPoint(e.point), e.lngLat, true)) dismissPopup();
+  });
+
+  map.on("zoom", () => {
+    // Switch once as any block-group-supported view crosses the overview threshold.
+    // Hidden MapLibre layers do not request tiles, so the large block-group
+    // archive stays off the first-paint path.
+    if (CURRENT && sourceForLayer(CURRENT) !== activeGeometryLane) setLayer(CURRENT);
+  });
+  map.on("moveend", syncHashState);
+  map.on("render", markFirstTilePaint);
+  markFirstTilePaint();
+}
+
+// Generate a small diagonal-hatch RGBA image for the special-area fill pattern.
+function makeHatchImage() {
+  const size = 8;
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const ctx = c.getContext("2d");
+  ctx.fillStyle = "rgba(42,32,24,0.85)";   // muted brown base
+  ctx.fillRect(0, 0, size, size);
+  ctx.strokeStyle = "rgba(176,138,90,0.9)"; // tan diagonal lines
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(-2, size + 2); ctx.lineTo(size + 2, -2);
+  ctx.moveTo(-2, 2); ctx.lineTo(2, -2);
+  ctx.moveTo(size - 2, size + 2); ctx.lineTo(size + 2, size - 2);
+  ctx.stroke();
+  return ctx.getImageData(0, 0, size, size);
+}
+
+let booted = false;
+const bootStart = Date.now();
+function boot() {
+  if (booted) return;
+  // Poll until the style spec is fully parsed before adding sources/layers.
+  // We deliberately do NOT gate on the full `load`/idle event, which can stall
+  // behind basemap raster tiles in restricted networks. isStyleLoaded() can
+  // also stay false indefinitely when a style sub-resource hangs, so the poll
+  // is bounded: after 12s we attempt init anyway — if the style truly is not
+  // ready, addSource throws into the catch below and the user sees an error
+  // instead of an infinite spinner.
+  if (!map.isStyleLoaded() && Date.now() - bootStart < 12000) { setTimeout(boot, 60); return; }
+  booted = true;
+  init().catch(err => {
+    document.getElementById("meta").textContent = "The map failed to load — please refresh to try again.";
+    console.error(err);
+  });
+}
+map.once("load", boot);
+map.once("styledata", () => setTimeout(boot, 0));
+boot();
+</script>
+</body>
+</html>

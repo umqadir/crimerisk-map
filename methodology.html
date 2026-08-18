@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CrimeRisk - Methodology</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; background: #0b0e14; color: #d7dce6;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 15px; line-height: 1.65; }
+  main { max-width: 46rem; margin: 0 auto; padding: 32px 22px 96px; }
+  a { color: #7fb4e8; }
+  .back { display: inline-block; font-size: 13px; margin-bottom: 26px; }
+  h1 { font-size: 26px; line-height: 1.25; margin: 0 0 18px; }
+  h2 { font-size: 19px; margin: 38px 0 10px; padding-top: 16px;
+       border-top: 1px solid #232a36; }
+  h3 { font-size: 16px; margin: 26px 0 8px; color: #e6e9ef; }
+  h4 { font-size: 14px; margin: 20px 0 6px; color: #aab2c2; }
+  p { margin: 0 0 14px; }
+  ul { margin: 0 0 14px; padding-left: 20px; }
+  li { margin-bottom: 6px; }
+  code { background: rgba(255,255,255,0.06); border: 1px solid #232a36;
+         border-radius: 4px; padding: 0 4px; font-size: 12.5px;
+         font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .tw { overflow-x: auto; margin: 0 0 16px; }
+  table { border-collapse: collapse; font-size: 13.5px; min-width: 22rem; }
+  th, td { border: 1px solid #232a36; padding: 5px 11px; text-align: left; }
+  th { background: rgba(255,255,255,0.04); font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+<a class="back" href="./">&larr; Back to the map</a>
+<h1>CrimeRisk methodology</h1>
+<h2>Edition</h2>
+<div class="tw"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody><tr><td>Edition</td><td>2025 risk edition</td></tr><tr><td>Surface</td><td>Current annual police-recorded crime risk</td></tr><tr><td>History window</td><td>2018–2025</td></tr><tr><td>Coverage</td><td>48 contiguous states and District of Columbia</td></tr><tr><td>Neighborhood boundaries</td><td>2020 Census</td></tr><tr><td>Primary neighborhood support</td><td>Census block group</td></tr><tr><td>Murder and rape support</td><td>Census tract</td></tr><tr><td>Index baseline</td><td>100 = national average for the selected crime and measure</td></tr></tbody></table></div>
+<p>Expected counts are annualized model estimates. They are not integer incident records.</p>
+<h2>Offenses</h2>
+<div class="tw"><table><thead><tr><th>Offense</th><th>Published neighborhood support</th></tr></thead><tbody><tr><td>Murder</td><td>Census tract</td></tr><tr><td>Rape</td><td>Census tract</td></tr><tr><td>Robbery</td><td>Census block group</td></tr><tr><td>Aggravated assault</td><td>Census block group</td></tr><tr><td>Burglary</td><td>Census block group</td></tr><tr><td>Larceny</td><td>Census block group</td></tr><tr><td>Motor vehicle theft</td><td>Census block group</td></tr></tbody></table></div>
+<h2>Jurisdiction levels</h2>
+<p>Inputs:</p>
+<ul><li>FBI Crime Data Explorer agency estimates, state estimates, SRS, NIBRS and CIUS</li><li>State and local official publications in the reviewed source registries</li><li>Official police-service footprints and Census block ownership</li><li>Eight annual jurisdiction panels, 2018–2025</li></ul>
+<p>Clean annual panel row:</p>
+<ul><li>12 reported months</li><li>observation weight 1</li><li>no filled component</li><li>no partial component</li></ul>
+<p>Temporal kernels:</p>
+<div class="tw"><table><thead><tr><th>Offense</th><th>Kernel</th></tr></thead><tbody><tr><td>Murder</td><td>Exponential weighting, 1-year half-life, information posterior</td></tr><tr><td>Rape, robbery, aggravated assault</td><td>Exponential weighting, 2-year half-life</td></tr><tr><td>Burglary, larceny, motor vehicle theft</td><td>Exponential weighting, 1-year half-life</td></tr></tbody></table></div>
+<p>Hierarchical estimate:</p>
+<ul><li>Recipient minimum: one clean year for municipal controls</li><li>Peer-reference minimum: two clean years</li><li>Peer key: offense × state × jurisdiction class × population band</li><li>Shrinkage constant: 0.5</li><li>State nonmunicipal remainder recipient minimum: two clean years</li><li>Statewide overlap controls: accounting fallback</li><li>Locked structural zeros: retained at zero</li><li>Verified source replacements: retained before national calibration</li></ul>
+<p>Undercovered state-remainder controls:</p>
+<ul><li>Reference remainders: at least two clean years and at least 100,000 residents</li><li>State feature: municipal controls below 50,000 residents</li><li>Target: state-specific small-municipality rate × pooled remainder/small-municipality ratio</li><li>Current-reporting coverage blend</li><li>Accounting value as lower floor</li><li>Held-out-state common-case mean Poisson deviance: 904.5</li><li>All-municipality comparison: 1,212.9</li><li>Pooled national-remainder comparison: 1,212.9</li><li>Robbery comparison: 217.5, 428.9 and 335.5</li></ul>
+<p>National offense totals use the same temporal kernels on FBI CDE state estimates. One uniform offense-wide factor reconciles the local estimates to each national anchor. There is no state, county, jurisdiction or map-edge calibration.</p>
+<div class="tw"><table><thead><tr><th>Offense</th><th>National annual anchor</th></tr></thead><tbody><tr><td>Murder</td><td>16,353</td></tr><tr><td>Rape</td><td>129,237</td></tr><tr><td>Robbery</td><td>205,633</td></tr><tr><td>Aggravated assault</td><td>857,368</td></tr><tr><td>Burglary</td><td>744,967</td></tr><tr><td>Larceny</td><td>4,160,052</td></tr><tr><td>Motor vehicle theft</td><td>795,522</td></tr></tbody></table></div>
+<h2>Police-service footprints</h2>
+<ul><li>Exclusive primary patrol ownership at Census-block support</li><li>One control per actual service provider or regional group</li><li>Pennsylvania municipal, contracted, regional and State Police service areas from the reviewed PCCD registry</li><li>Maryland county police and State Police reporter/service identities localized to their service areas</li><li>Cross-state tribal footprints retained as shared service identities where reviewed</li><li>Concurrent overlap agencies carried separately from primary patrol ownership</li><li>Unresolved overlap mass published in the unlocated-mass companion table</li></ul>
+<h2>Neighborhood allocation</h2>
+<p>Local jurisdiction totals are distributed inside their service footprints.</p>
+<ul><li>Direct geocoded incident shares: offense-specific reviewed city feeds</li><li>Other areas: three-expert allocation mixture</li><li>Experts: empirical baseline, bounded downward GBM and opportunity exposure</li><li>Mixture weights: <code>configs/mixture_ship_weights_v3.csv</code></li><li>Direct protected-class fields: excluded</li><li>Between-jurisdiction-only and protected proxy classes: excluded from neighborhood transfer</li><li>Murder: one tract estimator for direct-feed and modeled areas; 10-year incident half-life; 100-incident tract prior</li><li>Rape: tract-level information shrinkage</li><li>Murder and rape block-group expected counts: within-tract allocation for reconciliation only</li><li>Published block-group counts plus unlocated mass reconcile to the jurisdiction control</li><li>No post-model spatial smoothing</li><li>No cross-border feathering</li></ul>
+<h2>Denominators and measures</h2>
+<div class="tw"><table><thead><tr><th>Offense</th><th>Activity-adjusted denominator</th></tr></thead><tbody><tr><td>Murder, rape, robbery, aggravated assault</td><td>Resident, daytime and LandScan person-exposure ensemble</td></tr><tr><td>Burglary</td><td>Residential and weighted commercial premises</td></tr><tr><td>Larceny</td><td>Person exposure, destinations and commercial activity</td></tr><tr><td>Motor vehicle theft</td><td>Household and commuter vehicle exposure</td></tr></tbody></table></div>
+<p>Measures:</p>
+<ul><li>Activity-adjusted offense index</li><li>Resident offense index</li><li>Expected annual count</li><li>Crime density per square mile</li><li>Activity-adjusted score across seven offenses</li><li>Personal activity-adjusted score</li><li>Property activity-adjusted score</li><li>Resident event-burden indexes</li><li>Resident harm-burden index at tract support</li></ul>
+<p>Activity-adjusted aggregate scores are dimensionless relative scores. They are not probabilities or per-resident rates.</p>
+<h2>Special-use areas</h2>
+<p>Types:</p>
+<ul><li>Ordinary</li><li>Campus or institution</li><li>Prison or institutional</li><li>Park or open space</li><li>Transient destination</li><li>Industrial employment</li><li>Unknown special use</li></ul>
+<p>Publication rules:</p>
+<ul><li>Special-use type: annotation only</li><li>Activity-adjusted measure: offense-specific denominator and floor</li><li>Resident measure: resident population denominator and 50-resident floor</li><li>Near-zero-resident activity denominator floor: 500 when resident population is below 50</li><li>Missing block-group value: parent-tract value at the same estimand where available</li></ul>
+<h2>Map display</h2>
+<ul><li>Fixed index breaks: 3.125, 6.25, 12.5, 25, 50, 75, 100, 133, 200, 400, 800, 1,600, 3,200, 6,400, 12,800</li><li>Diverging scale centered at 100</li><li>Tract overview below zoom 6</li><li>Block-group display from zoom 6 for block-group-supported measures</li><li>Tract display at all zooms for murder and rape</li><li>Estimated-source hatching</li><li>Fixed fill opacity at every zoom</li><li>Optional special-use annotation; no special-use color suppression</li><li>Water mask above the choropleth</li></ul>
+<h2>Validation</h2>
+<div class="tw"><table><thead><tr><th>Check</th><th>Result</th></tr></thead><tbody><tr><td>Block groups</td><td>238,193</td></tr><tr><td>Tracts</td><td>83,776</td></tr><tr><td>Jurisdiction-offense controls</td><td>82,558</td></tr><tr><td>Dynamic or information-posterior controls</td><td>77,195</td></tr><tr><td>Coverage-adjusted state remainders</td><td>213</td></tr><tr><td>Accounting fallbacks</td><td>5,150</td></tr><tr><td>Locked structural-zero rows preserved</td><td>1,001</td></tr><tr><td>Verified source replacements preserved before calibration</td><td>30</td></tr><tr><td>National anchors matched</td><td>7 of 7</td></tr></tbody></table></div>
+<p>Release checks:</p>
+<ul><li>Control conservation by jurisdiction, state and offense</li><li>Published block-group plus unlocated-mass reconciliation</li><li>Rate and index recomputation from count and denominator</li><li>Tract-to-block-group support consistency</li><li>Direct-feed and modeled-share reconciliation</li><li>Structural-zero and verified-replacement locks</li><li>Denominator publication rules</li><li>State-boundary, jurisdiction-boundary, source-mode and tract-flatness diagnostics</li><li>Fixed named-place and state-border comparisons against AGS 2022A as an external comparator</li><li>Rendered national, regional, border and city view review</li></ul>
+<h2>Limitations</h2>
+<ul><li>Police-recorded crime only</li><li>Unreported crime excluded</li><li>Reporting definitions and practices vary by agency and state</li><li>Modeled neighborhood allocation outside reviewed direct-incident feeds</li><li>Murder and rape not published at block-group rate support</li><li>Tourist and event populations not fully represented in exposure denominators</li><li>Los Angeles has no admitted direct-incident allocation feed in this edition</li><li>Sparse small-area counts produce wide uncertainty intervals</li><li>Special-use classification is display metadata; denominator floors still apply</li><li>2020 boundaries do not represent later boundary changes</li><li>Alaska, Hawaii and territories excluded</li><li>Indexes do not estimate an individual person's probability of victimization</li></ul>
+<h2>Reproduction</h2>
+<ul><li>Pipeline contracts: <code>docs/PIPELINE.md</code></li><li>Allocation implementation: <code>src/crimerisk/allocation.py</code></li><li>Level implementation: <code>src/crimerisk/smoothed_controls.py</code></li><li>Police-service inputs: <code>configs/pa_police_service_coverage.csv</code> and reviewed footprint registries</li><li>City-feed admissions: <code>configs/city_incident_priority.csv</code> and <code>configs/city_incident_sources.csv</code></li><li>Release validator: <code>scripts/diagnostics/validate_release_outputs.py</code></li><li>Map snapshot build: <code>frontend/build/01_extract_indices.py</code> through <code>frontend/build/05_stamp_snapshot.py</code></li><li>Data-source notices: <code>ATTRIBUTION.md</code></li></ul>
+</main>
+</body>
+</html>
