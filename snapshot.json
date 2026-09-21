@@ -26,7 +26,7 @@
   "geometry_source": "Census TIGER/Line 2020 block groups (full resolution), per-state tl_2020_*_bg",
   "geometry_vintage": "2020",
   "level": "block_group",
-  "tiles": "https://pub-ea0bb77ef1a941cc8a799ed80d2ebc80.r2.dev/crimerisk_block_groups_2025_v52.pmtiles",
+  "tiles": "https://tiles.qqlab.io/crimerisk_block_groups_2025_v52.pmtiles",
   "tile_layer": "blockgroups",
   "feature_id_property": "block_group_geoid",
   "county_names": {
@@ -3255,7 +3255,7 @@
   "n_features": 238193,
   "n_index_features": 238193,
   "n_index_no_geometry": 0,
-  "tract_tiles": "https://pub-ea0bb77ef1a941cc8a799ed80d2ebc80.r2.dev/crimerisk_tracts_2025_v52.pmtiles",
+  "tract_tiles": "https://tiles.qqlab.io/crimerisk_tracts_2025_v52.pmtiles",
   "tract_tile_layer": "tracts",
   "tract_feature_id_property": "tract_id",
   "n_tract_features": 83776,
