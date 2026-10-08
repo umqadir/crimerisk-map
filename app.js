@@ -17,10 +17,12 @@
     crime: "ov",
     sel: null,             // {level, geoid}
     cmp: null,             // {level, geoid}
+    tractView: null,       // block-group geoid whose tract estimate was asked for
     marker: null
   };
 
   var shardIndex = {};     // level -> {base_depth, split:Set}
+  var shardIndexReady = {};// level -> Promise
   var shardCache = {};     // level -> prefix -> Promise
   var benchCache = {};     // state -> Promise
   var LEVELS = { c: "county", t: "tract", b: "bg" };
@@ -51,6 +53,14 @@
     return M.measure_order.indexOf(field());
   }
 
+  /* What the selected number is, per index and measure (manifest crime_help); falls back to the
+     measure's generic line. */
+  function helpText(crime, measure) {
+    var h = M.crime_help && M.crime_help[crime];
+    if (h && h[measure]) return h[measure];
+    return M.measures.filter(function (m) { return m.key === measure; })[0].subcopy;
+  }
+
   function crimeDef(key) {
     for (var i = 0; i < M.crimes.length; i++) if (M.crimes[i].key === key) return M.crimes[i];
     return M.crimes[0];
@@ -75,24 +85,90 @@
     return geoid.slice(0, d);
   }
 
+  /* A failed request is a load error, never "no data": the promise rejects and
+     is dropped from the cache so the next attempt refetches. */
   function loadShardIndex(level) {
-    return fetch("data/shards/" + level + "/index.json")
-      .then(function (r) { return r.json(); })
-      .then(function (j) {
-        shardIndex[level] = { base_depth: j.base_depth, split: new Set(j.split) };
-      });
+    if (!shardIndexReady[level]) {
+      shardIndexReady[level] = fetch("data/shards/" + level + "/index.json")
+        .then(function (r) {
+          if (!r.ok) throw new Error("shard index " + r.status);
+          return r.json();
+        })
+        .then(function (j) {
+          shardIndex[level] = { base_depth: j.base_depth, split: new Set(j.split) };
+        })
+        .catch(function (e) { delete shardIndexReady[level]; throw e; });
+    }
+    return shardIndexReady[level];
   }
 
+  /* Resolves to the area's record, or null when the published tree has no record
+     for it (a 404 shard is an absent prefix, i.e. no data). Rejects when the data
+     could not be fetched. */
   function lookup(level, geoid) {
-    if (!shardIndex[level]) return Promise.resolve(null);
-    var prefix = shardPrefix(level, geoid);
-    var cache = shardCache[level] || (shardCache[level] = {});
-    if (!cache[prefix]) {
-      cache[prefix] = fetch("data/shards/" + level + "/" + prefix + ".json")
-        .then(function (r) { return r.ok ? r.json() : {}; })
-        .catch(function () { return {}; });
+    return loadShardIndex(level).then(function () {
+      var prefix = shardPrefix(level, geoid);
+      var cache = shardCache[level] || (shardCache[level] = {});
+      if (!cache[prefix]) {
+        cache[prefix] = fetch("data/shards/" + level + "/" + prefix + ".json")
+          .then(function (r) {
+            if (r.status === 404) return {};
+            if (!r.ok) throw new Error("shard " + r.status);
+            return r.json();
+          })
+          .catch(function (e) { delete cache[prefix]; throw e; });
+      }
+      return cache[prefix].then(function (obj) { return obj[geoid] || null; });
+    });
+  }
+
+  /* ------------------------------------------------------------- status -- */
+
+  /* Publication status per measure (manifest status.codes): 0 published,
+     1 suppressed below a denominator or support floor, 2 murder / rape at block
+     group, 3 no data. Shard records carry the 20 codes at position 11; tiles carry
+     them packed in one number, digit i (base status.base) for measure i. */
+  var ST = { PUB: 0, SUP: 1, TRACT: 2, NONE: 3 };
+
+  function recStatus(rec, mi) {
+    if (!rec) return ST.NONE;
+    var v = rec[6] ? rec[6][mi] : null;
+    if (v !== null && v !== undefined) return ST.PUB;
+    var a = rec[11];
+    return a && a[mi] !== null && a[mi] !== undefined ? a[mi] : ST.NONE;
+  }
+
+  function statusDigit(mi) {
+    return ["%", ["floor", ["/", ["coalesce", ["get", M.status.tile_field], 0],
+      Math.pow(M.status.base, mi)]], M.status.base];
+  }
+
+  function tileStatus(props, mi) {
+    var ms = props[M.status.tile_field] || 0;
+    return Math.floor(ms / Math.pow(M.status.base, mi)) % M.status.base;
+  }
+
+  /* The card sentence for an unpublished value. */
+  function statusText(r) {
+    var c = M.status.card;
+    if (r.error) return c.load_error;
+    if (r.status === ST.SUP) {
+      if (r.level === "county") return c.suppressed_county;
+      if (state.measure === "resident") return c.suppressed_resident;
+      return crimeDef(state.crime).composite ? c.suppressed_exposure_composite : c.suppressed_exposure;
     }
-    return cache[prefix].then(function (obj) { return obj[geoid] || null; });
+    if (r.status === ST.TRACT) return tractOnlyText();
+    return c.no_data;
+  }
+
+  function statusShort(r) {
+    if (r.error) return "Not loaded";
+    if (r.status === ST.SUP) return "Not published";
+    return "No estimate";
+  }
+
+  function tractOnlyText() {
+    return M.status.card.tract_only.replace("{offense}", crimeDef(state.crime).label);
   }
 
   function bench(st) {
@@ -148,13 +224,64 @@
 
   /* ------------------------------------------------------------- legend -- */
 
+  /* An area without a value paints the neutral grey on every layer, so a coarser
+     layer underneath never shows through as if it were this area's value. */
   function paintExpression() {
     var expr = ["step", ["get", field()], M.legend[0].color];
     for (var i = 1; i < M.legend.length; i++) expr.push(M.legend[i].lo, M.legend[i].color);
-    return ["case", ["has", field()], expr, "rgba(0,0,0,0)"];
+    return ["case", ["has", field()], expr, M.no_estimate.color];
   }
 
-  var countyMode = false;
+  /* Areas whose value for the active measure is suppressed carry the hatch. */
+  function suppressedFilter() {
+    return ["all", ["!", ["has", field()]], ["==", statusDigit(measureIndex()), ST.SUP]];
+  }
+
+  function legendItem(ul, swatchClass, color, text) {
+    var li = document.createElement("li");
+    var sw = document.createElement("span");
+    sw.className = swatchClass;
+    if (color) sw.style.backgroundColor = color;
+    var lab = document.createElement("span");
+    lab.textContent = text;
+    li.appendChild(sw);
+    li.appendChild(lab);
+    ul.appendChild(li);
+  }
+
+  /* Compact legend for the collapsed mobile sheet: the seven classes, then the
+     unpublished swatch. */
+  function renderLegendStrip() {
+    var el = $("legend-strip");
+    if (!el) return;
+    el.innerHTML = "";
+    var bar = document.createElement("span");
+    bar.className = "bar";
+    M.legend.forEach(function (c) {
+      var b = document.createElement("span");
+      b.style.background = c.color;
+      b.title = c.label;
+      bar.appendChild(b);
+    });
+    var lo = document.createElement("span");
+    lo.className = "end";
+    lo.textContent = "<" + M.legend[1].lo;
+    var hi = document.createElement("span");
+    hi.className = "end";
+    hi.textContent = M.legend[M.legend.length - 1].lo + "+";
+    var sup = document.createElement("span");
+    sup.className = "swatch sup";
+    sup.style.backgroundColor = M.no_estimate.color;
+    sup.title = M.status.legend.suppressed_low_denominator;
+    var supl = document.createElement("span");
+    supl.className = "end";
+    supl.textContent = "Not published";
+    el.appendChild(lo);
+    el.appendChild(bar);
+    el.appendChild(hi);
+    el.appendChild(sup);
+    el.appendChild(supl);
+  }
 
   function renderLegend() {
     var ul = $("legend");
@@ -174,17 +301,9 @@
       li.appendChild(rng);
       ul.appendChild(li);
     });
-    if (countyMode) {
-      var li0 = document.createElement("li");
-      var sw0 = document.createElement("span");
-      sw0.className = "swatch";
-      sw0.style.background = M.no_estimate.color;
-      var l0 = document.createElement("span");
-      l0.textContent = M.no_estimate.label;
-      li0.appendChild(sw0);
-      li0.appendChild(l0);
-      ul.appendChild(li0);
-    }
+    // Unpublished areas, at every zoom.
+    legendItem(ul, "swatch sup", M.no_estimate.color, M.status.legend.suppressed_low_denominator);
+    legendItem(ul, "swatch", M.no_estimate.color, M.status.legend.no_data);
     if ($("special-toggle").checked) {
       var li2 = document.createElement("li");
       var sw2 = document.createElement("span");
@@ -226,9 +345,7 @@
       b.addEventListener("click", function () { setMeasure(m.key); });
       me.appendChild(b);
     });
-    $("subcopy").textContent = M.measures.filter(function (m) {
-      return m.key === state.measure;
-    })[0].subcopy;
+    $("subcopy").textContent = helpText(state.crime, state.measure);
   }
 
   /* ---------------------------------------------------------------- map -- */
@@ -242,19 +359,21 @@
     });
 
     var paint = paintExpression();
+    var supFilter = suppressedFilter();
 
-    // Counties below the support floor publish no value; they are named grey,
-    // not a hole and not a colour class.
-    map.addLayer({
-      id: "fill-county-none", type: "fill", source: "c", "source-layer": M.tiles.county.layer,
-      maxzoom: M.zoom.bg_min,
-      filter: ["!", ["has", field()]],
-      paint: { "fill-color": M.no_estimate.color, "fill-opacity": 1 }
-    });
+    // Each fill is followed by its suppression hatch, so a finer layer covers the
+    // coarser layer's hatch as well as its colour. Counties below the support
+    // floor, and cells below a denominator floor, are grey and hatched: not a
+    // hole and not a colour class.
     map.addLayer({
       id: "fill-county", type: "fill", source: "c", "source-layer": M.tiles.county.layer,
       maxzoom: M.zoom.bg_min,
       paint: { "fill-color": paint, "fill-opacity": 1 }
+    });
+    map.addLayer({
+      id: "sup-county", type: "fill", source: "c", "source-layer": M.tiles.county.layer,
+      maxzoom: M.zoom.bg_min, filter: supFilter,
+      paint: { "fill-pattern": "hatch-sup" }
     });
     map.addLayer({
       id: "fill-tract", type: "fill", source: "t", "source-layer": M.tiles.tract.layer,
@@ -262,9 +381,19 @@
       paint: { "fill-color": paint, "fill-opacity": 1 }
     });
     map.addLayer({
+      id: "sup-tract", type: "fill", source: "t", "source-layer": M.tiles.tract.layer,
+      minzoom: M.zoom.tract_min, filter: supFilter,
+      paint: { "fill-pattern": "hatch-sup" }
+    });
+    map.addLayer({
       id: "fill-bg", type: "fill", source: "b", "source-layer": M.tiles.bg.layer,
       minzoom: M.zoom.bg_min,
       paint: { "fill-color": paint, "fill-opacity": 1 }
+    });
+    map.addLayer({
+      id: "sup-bg", type: "fill", source: "b", "source-layer": M.tiles.bg.layer,
+      minzoom: M.zoom.bg_min, filter: supFilter,
+      paint: { "fill-pattern": "hatch-sup" }
     });
 
     map.addLayer({
@@ -344,12 +473,12 @@
     if (basemapMerged) return;
     if (!map.isStyleLoaded()) { setTimeout(function () { mergeBasemap(style); }, 120); return; }
     basemapMerged = true;
+    try { map.setSprite(style.sprite || M.basemap.sprite); } catch (e) { /* icons are optional */ }
     Object.keys(style.sources).forEach(function (id) {
       if (!map.getSource(id)) map.addSource(id, style.sources[id]);
     });
-    // Bottom of our stack is the county no-estimate fill; basemap context has
-    // to go under that, not between it and the choropleth.
-    var firstFill = map.getLayer("fill-county-none") ? "fill-county-none" : "fill-county";
+    // Bottom of our stack is the county fill; basemap context goes under it.
+    var firstFill = "fill-county";
     var firstOutline = "hover-county";
     style.layers.forEach(function (l) {
       if (map.getLayer(l.id)) return;
@@ -382,14 +511,17 @@
     });
   }
 
-  /* Transparent diagonal hatch. The pattern must not hide the class colour
-     underneath, so it is thin dark strokes on a fully transparent tile. */
-  function hatchImage() {
+  /* Transparent diagonal hatch. The pattern must not hide the colour underneath,
+     so it is thin dark strokes on a fully transparent tile. The special-use
+     annotation leans one way; the suppression hatch leans the other and is
+     lighter, drawn over the grey of an unpublished area. */
+  function hatchImage(mirror, stroke) {
     var s = 16, c = document.createElement("canvas");
     c.width = c.height = s;
     var g = c.getContext("2d");
     g.clearRect(0, 0, s, s);
-    g.strokeStyle = "rgba(20,22,26,0.62)";
+    if (mirror) { g.translate(s, 0); g.scale(-1, 1); }
+    g.strokeStyle = stroke || "rgba(20,22,26,0.62)";
     g.lineWidth = 2;
     g.lineCap = "square";
     g.beginPath();
@@ -420,17 +552,20 @@
     ["fill-county", "fill-tract", "fill-bg"].forEach(function (id) {
       map.setPaintProperty(id, "fill-color", paint);
     });
-    map.setFilter("fill-county-none", ["!", ["has", field()]]);
+    var supFilter = suppressedFilter();
+    ["sup-county", "sup-tract", "sup-bg"].forEach(function (id) {
+      map.setFilter(id, supFilter);
+    });
     var rare = tractOnly();
-    ["fill-bg", "edge-bg"].forEach(function (id) {
+    ["fill-bg", "sup-bg", "edge-bg"].forEach(function (id) {
       map.setLayoutProperty(id, "visibility", rare ? "none" : "visible");
     });
     // Tract boundaries belong to whichever zooms the tract layer owns.
     map.setPaintProperty("edge-tract", "line-opacity",
       rare ? 1 : ["step", ["zoom"], 1, M.zoom.bg_min, 0]);
     updateHatch();
-    updateCountyMode();
     updateNote();
+    renderSheetSummary();
   }
 
   function updateHatch() {
@@ -444,13 +579,6 @@
     if (map.getLayer("hatch-bg")) {
       map.setLayoutProperty("hatch-bg", "visibility", on && !rare ? "visible" : "none");
     }
-  }
-
-  function updateCountyMode() {
-    var on = map.getZoom() < M.zoom.tract_min;
-    if (on === countyMode) return;
-    countyMode = on;
-    renderLegend();
   }
 
   function updateNote() {
@@ -573,36 +701,58 @@
     return "Census block group " + geoid;
   }
 
+  /* Resolves a selection to what the card shows:
+       {rec, value, status, level, geoid, requested, note, error}
+     A block group never silently becomes its tract. Murder and rape at block
+     group are shown at the tract with a note saying so (the map itself shows
+     tracts for them); a suppressed or empty block group shows its own status and
+     offers the tract as an explicit action (state.tractView). */
   function resolve(ref) {
-    /* Returns {rec, value, level, geoid, fellBack} for a selection, following
-       the block-group -> parent-tract fallback when the block group carries no
-       value for the active measure. */
     var level = ref.level;
     var geoid = ref.geoid;
+    var note = null;
     if (level === "bg" && tractOnly()) {
-      level = "tract";
-      geoid = geoid.slice(0, 11);
+      level = "tract"; geoid = geoid.slice(0, 11); note = "tract_only";
+    } else if (level === "bg" && state.tractView === ref.geoid) {
+      level = "tract"; geoid = geoid.slice(0, 11); note = "tract_estimate";
     }
+    var mi = measureIndex();
     return lookup(level, geoid).then(function (rec) {
-      var mi = measureIndex();
       var v = rec && rec[6] ? rec[6][mi] : null;
-      if (level === "bg" && (v === null || v === undefined)) {
-        return lookup("tract", geoid.slice(0, 11)).then(function (trec) {
-          return {
-            rec: trec, level: "tract", geoid: geoid.slice(0, 11),
-            value: trec && trec[6] ? trec[6][mi] : null,
-            fellBack: true, requested: ref
-          };
-        });
-      }
-      return { rec: rec, level: level, geoid: geoid, value: v, fellBack: level !== ref.level, requested: ref };
+      if (v === undefined) v = null;
+      return {
+        rec: rec, value: v, status: recStatus(rec, mi), level: level, geoid: geoid,
+        requested: ref, note: note, error: false
+      };
+    }, function () {
+      return {
+        rec: null, value: null, status: null, level: level, geoid: geoid,
+        requested: ref, note: note, error: true
+      };
     });
+  }
+
+  function badge(text) {
+    var b = document.createElement("span");
+    b.className = "badge";
+    b.textContent = text;
+    return b;
+  }
+
+  function actionButton(text, onClick) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.textContent = text;
+    b.addEventListener("click", onClick);
+    return b;
   }
 
   function renderCard(r) {
     var card = $("card");
     var cls = legendClass(r.value);
     var rec = r.rec;
+    var c = M.status.card;
+    var published = r.value !== null && r.value !== undefined;
     var frag = document.createElement("div");
 
     var close = document.createElement("button");
@@ -616,18 +766,12 @@
     place.className = "place";
     place.textContent = placeLine(rec, r.level, r.geoid);
     if (rec && rec[5]) {
-      var b = document.createElement("span");
-      b.className = "badge";
-      b.textContent = M.special_use[rec[5]];
       place.appendChild(document.createTextNode(" "));
-      place.appendChild(b);
+      place.appendChild(badge(M.special_use[rec[5]]));
     }
-    if (r.fellBack) {
-      var b2 = document.createElement("span");
-      b2.className = "badge";
-      b2.textContent = "Tract estimate";
+    if (r.note === "tract_estimate") {
       place.appendChild(document.createTextNode(" "));
-      place.appendChild(b2);
+      place.appendChild(badge(c.tract_estimate_badge));
     }
 
     var head = document.createElement("p");
@@ -637,26 +781,46 @@
       "</span>" + (cls ? " — " + cls.label : "");
 
     var times = document.createElement("p");
-    times.className = "times";
-    times.textContent = (r.value === null || r.value === undefined)
-      ? (r.level === "county" ? M.no_estimate.label : "Not published for this area")
-      : (r.value / 100).toFixed(r.value < 1000 ? 1 : 0) + "× U.S. average";
+    times.className = published ? "times" : "times status";
+    times.textContent = published
+      ? (r.value / 100).toFixed(r.value < 1000 ? 1 : 0) + "× U.S. average"
+      : statusText(r);
+
+    var noteRow = document.createElement("p");
+    noteRow.className = "row note";
+    noteRow.textContent = r.note === "tract_only" ? tractOnlyText() : "";
 
     var counts = document.createElement("p");
     counts.className = "row";
     var ec = expectedCount(rec);
-    // Whole offences. A tenth of an offence is not a thing the model knows.
+    // Whole offences. A tenth of an offence is not a thing the model knows. The
+    // count is published even where the index is suppressed.
     counts.textContent = ec === null
       ? ""
-      : "Estimated " + M.data_year + " offenses: " + (ec < 0.5 ? "under 1" : fmt(ec));
+      : "Expected offenses per year: " + (ec < 0.5 ? "under 1" : fmt(ec));
+
+    // Both measures on the card: the other measure's value for the same crime and area.
+    var otherKey = state.measure === "exposure" ? "resident" : "exposure";
+    var otherField = (otherKey === "exposure" ? "x_" : "r_") + state.crime;
+    var oi = M.measure_order.indexOf(otherField);
+    var ov = rec && rec[6] ? rec[6][oi] : null;
+    var other = document.createElement("p");
+    other.className = "row";
+    var otherLabel = M.measures.filter(function (m) { return m.key === otherKey; })[0].label;
+    other.textContent = r.error || r.level === "county" ? "" : otherLabel + ": " +
+      (ov === null || ov === undefined ? statusShort({ status: recStatus(rec, oi) }) : fmt(ov));
+
+    var help = document.createElement("p");
+    help.className = "row note";
+    help.textContent = helpText(state.crime, state.measure);
 
     var denom = document.createElement("p");
     denom.className = "row";
-    denom.textContent = r.value === null || r.value === undefined ? "" : denomPhrase();
+    denom.textContent = published ? denomPhrase() : "";
 
     var total = document.createElement("p");
     total.className = "row";
-    total.textContent = totalPhrase(rec, r.level);
+    total.textContent = r.error ? "" : totalPhrase(rec, r.level);
 
     var benchRow = document.createElement("p");
     benchRow.className = "row";
@@ -668,13 +832,33 @@
 
     var src = document.createElement("p");
     src.className = "source";
-    src.textContent = r.level === "county" ? M.copy.county_note : srcPhrase(rec);
+    src.textContent = r.error ? "" : (r.level === "county" ? M.copy.county_note : srcPhrase(rec));
+
+    // Explicit actions: retry a failed load; offer the parent tract for a block
+    // group that publishes no value; return from the tract to the block group.
+    var acts = document.createElement("p");
+    acts.className = "actions";
+    if (r.error) {
+      acts.appendChild(actionButton(c.retry, function () { refreshSelection(); }));
+    } else if (r.requested.level === "bg" && r.level === "bg" && !published) {
+      acts.appendChild(actionButton(c.show_tract, function () {
+        state.tractView = r.requested.geoid;
+        applySelectionFilters();
+        refreshSelection();
+      }));
+    } else if (r.note === "tract_estimate") {
+      acts.appendChild(actionButton(c.back_to_block_group, function () {
+        state.tractView = null;
+        applySelectionFilters();
+        refreshSelection();
+      }));
+    }
 
     var links = document.createElement("p");
     links.className = "links";
     var cmpBtn = document.createElement("button");
     cmpBtn.type = "button";
-    cmpBtn.textContent = state.cmp ? "Compare" : "Compare";
+    cmpBtn.textContent = "Compare";
     cmpBtn.addEventListener("click", startCompare);
     links.appendChild(cmpBtn);
     links.appendChild(dot());
@@ -686,20 +870,26 @@
     frag.appendChild(place);
     frag.appendChild(head);
     frag.appendChild(times);
+    if (noteRow.textContent) frag.appendChild(noteRow);
+    if (acts.childNodes.length) frag.appendChild(acts);
+    if (other.textContent) frag.appendChild(other);
     if (counts.textContent) frag.appendChild(counts);
     if (denom.textContent) frag.appendChild(denom);
     if (total.textContent) frag.appendChild(total);
     frag.appendChild(benchRow);
     frag.appendChild(gid);
     if (src.textContent) frag.appendChild(src);
+    frag.appendChild(help);
     frag.appendChild(links);
 
     card.innerHTML = "";
     card.appendChild(frag);
     card.classList.add("on");
+    card.setAttribute("data-status", r.error ? "error" : String(r.status));
+    syncSheet();
 
     var st = M.state_abbr_by_fips[r.geoid.slice(0, 2)];
-    if (st) {
+    if (st && !r.error) {
       bench(st).then(function (bd) {
         if (!bd) return;
         var mi = bd.measures.indexOf(field());
@@ -731,13 +921,20 @@
     return a;
   }
 
+  /* The outline follows what the card shows: the block group, or its tract when
+     the tract estimate was asked for. */
+  function shownRef() {
+    if (!state.sel) return null;
+    if (state.sel.level === "bg" && (tractOnly() || state.tractView === state.sel.geoid)) {
+      return { level: "tract", geoid: state.sel.geoid.slice(0, 11) };
+    }
+    return state.sel;
+  }
+
   function applySelectionFilters() {
+    var shown = shownRef();
     ["county", "tract", "bg"].forEach(function (level) {
-      var gid = "";
-      if (state.sel) {
-        if (state.sel.level === level) gid = state.sel.geoid;
-        else if (state.sel.level === "bg" && level === "tract" && state.sel.geoid.length === 12) gid = "";
-      }
+      var gid = shown && shown.level === level ? shown.geoid : "";
       map.setFilter("selhalo-" + level, ["==", ["get", "geoid"], gid]);
       map.setFilter("sel-" + level, ["==", ["get", "geoid"], gid]);
     });
@@ -745,11 +942,14 @@
 
   function select(level, geoid, opts) {
     state.sel = { level: level, geoid: geoid };
+    state.tractView = null;
     applySelectionFilters();
     writeUrl();
     return resolve(state.sel).then(function (r) {
       if (state.cmp) { renderCompare(); } else { renderCard(r); }
+      setSnap("detail");
       if (opts && opts.focus) $("card").focus();
+      if (!opts || opts.fit !== false) fitShown();
       return r;
     });
   }
@@ -757,17 +957,90 @@
   function refreshSelection() {
     if (state.cmp) { renderCompare(); return; }
     if (!state.sel) return;
-    resolve(state.sel).then(renderCard);
+    resolve(state.sel).then(function (r) { renderCard(r); fitShown(); });
   }
 
   function clearSelection() {
     state.sel = null;
     state.cmp = null;
+    state.tractView = null;
     applySelectionFilters();
     $("card").classList.remove("on");
     $("compare").classList.remove("on");
     if (state.marker) { state.marker.remove(); state.marker = null; }
+    setSnap("collapsed");
     writeUrl();
+  }
+
+  /* ---------------------------------------------------- fit to viewport -- */
+
+  /* The part of the map not covered by the card (desktop) or the bottom sheet
+     (mobile), as padding in CSS pixels. */
+  function obscuredPadding() {
+    var pad = { top: 16, right: 16, bottom: 16, left: 16 };
+    var wrap = document.querySelector(".map-wrap").getBoundingClientRect();
+    if (isMobile()) {
+      var sheet = $("sidebar").getBoundingClientRect();
+      pad.bottom += Math.max(0, wrap.bottom - sheet.top);
+      pad.top += 44;                         // map note / attribution row
+    } else {
+      ["card", "compare"].forEach(function (id) {
+        var el = $(id);
+        if (!el.classList.contains("on")) return;
+        var b = el.getBoundingClientRect();
+        pad.right = Math.max(pad.right, wrap.right - b.left + 12);
+      });
+    }
+    return pad;
+  }
+
+  /* Bounding box of every rendered piece of a feature (tiles clip polygons, so
+     one area can arrive as several parts). */
+  function featureBounds(level, geoid) {
+    var feats = map.querySourceFeatures(SRC[level], {
+      sourceLayer: M.tiles[level].layer,
+      filter: ["==", ["get", "geoid"], geoid]
+    });
+    if (!feats.length) return null;
+    var b = [Infinity, Infinity, -Infinity, -Infinity];
+    feats.forEach(function (f) {
+      var g = f.geometry;
+      var polys = g.type === "Polygon" ? [g.coordinates] : (g.type === "MultiPolygon" ? g.coordinates : []);
+      polys.forEach(function (poly) {
+        poly[0].forEach(function (pt) {
+          if (pt[0] < b[0]) b[0] = pt[0];
+          if (pt[1] < b[1]) b[1] = pt[1];
+          if (pt[0] > b[2]) b[2] = pt[0];
+          if (pt[1] > b[3]) b[3] = pt[1];
+        });
+      });
+    });
+    return isFinite(b[0]) ? [[b[0], b[1]], [b[2], b[3]]] : null;
+  }
+
+  /* Keep the shown area inside the unobscured part of the map. It pans, and
+     zooms out only when the area is larger than the free space; it never zooms
+     in past the reader's own zoom. */
+  function fitShown(retried) {
+    var ref = shownRef();
+    if (!ref || !map) return;
+    requestAnimationFrame(function () {
+      var bb = featureBounds(ref.level, ref.geoid);
+      // A selection restored from a URL can arrive before its tiles: try once more
+      // when the map next settles.
+      if (!bb) {
+        if (!retried) { map.once("idle", function () { fitShown(true); }); map.triggerRepaint(); }
+        return;
+      }
+      var pad = obscuredPadding();
+      var canvas = map.getCanvas();
+      var w = canvas.clientWidth, h = canvas.clientHeight;
+      var sw = map.project(bb[0]), ne = map.project(bb[1]);
+      var inside = sw.x >= pad.left && ne.x <= w - pad.right &&
+        ne.y >= pad.top && sw.y <= h - pad.bottom;
+      if (inside) return;
+      map.fitBounds(bb, { padding: pad, maxZoom: map.getZoom(), duration: 450 });
+    });
   }
 
   /* ------------------------------------------------------------ compare -- */
@@ -788,6 +1061,7 @@
     close.innerHTML = "&times;";
     close.addEventListener("click", function () { endCompare(); });
     c.appendChild(close);
+    setSnap("detail");
     c.focus();
   }
 
@@ -799,6 +1073,8 @@
     refreshSelection();
     if (state.sel) $("card").classList.add("on");
   }
+
+  function cellText(v) { return typeof v === "string" ? v : fmt(v); }
 
   function renderCompare() {
     if (!state.sel || !state.cmp) return;
@@ -836,7 +1112,9 @@
         }
 
         var ja = jval(bds[0], a.rec), jb = jval(bds[1], b.rec);
-        var rows = [row("This area", a.value, b.value)];
+        var rows = [row("This area",
+          a.value === null ? statusShort(a) : a.value,
+          b.value === null ? statusShort(b) : b.value)];
         if (ja !== null || jb !== null) rows.push(row("Police jurisdiction", ja, jb));
         rows.push(
           row("State", bds[0] ? bds[0].state[f] : null, bds[1] ? bds[1].state[f] : null),
@@ -873,7 +1151,7 @@
             var sb = bds[1] ? bds[1].state_name : "State";
             lab = sa === sb ? sa : sa + " / " + sb;
           }
-          [lab, fmt(r.a), fmt(r.b)].forEach(function (t) {
+          [lab, cellText(r.a), cellText(r.b)].forEach(function (t) {
             var td = document.createElement("td");
             td.textContent = t;
             tr.appendChild(td);
@@ -907,6 +1185,7 @@
         p.appendChild(link("Download", "download.html"));
         c.appendChild(p);
         c.classList.add("on");
+        syncSheet();
       });
     });
   }
@@ -1010,6 +1289,7 @@
       state.cmp = { level: level, geoid: gid };
       writeUrl();
       renderCompare();
+      setSnap("detail");
     } else {
       // Focus follows the result so a keyboard user lands on the card.
       select(level, gid, { focus: true });
@@ -1066,13 +1346,76 @@
     });
   }
 
+  /* ------------------------------------------------------ mobile sheet -- */
+
+  /* On a phone the sidebar is ONE bottom sheet with three snap states:
+     collapsed (title, active measure and a legend strip), controls (search,
+     pickers, full legend) and detail (the selected area's card or the
+     comparison). The card and the comparison move into the sheet; on a wide
+     screen they float over the map as before. */
+  var MOBILE = window.matchMedia("(max-width: 700px)");
+
+  function isMobile() { return MOBILE.matches; }
+
+  function placePanels() {
+    var host = isMobile() ? $("sheet-detail") : document.querySelector(".map-wrap");
+    ["card", "compare"].forEach(function (id) {
+      if ($(id).parentNode !== host) host.appendChild($(id));
+    });
+    syncSheet();
+  }
+
+  function setSnap(snap) {
+    var open = $("card").classList.contains("on") || $("compare").classList.contains("on");
+    if (snap === "detail" && !open) snap = "collapsed";
+    $("sidebar").setAttribute("data-snap", snap);
+    Array.prototype.forEach.call(document.querySelectorAll("#sheet-tabs button"), function (b) {
+      b.setAttribute("aria-pressed", String(b.getAttribute("data-snap") === snap));
+    });
+    syncSheet();
+  }
+
+  /* Map controls anchored to the bottom edge sit above the sheet. */
+  function syncSheet() {
+    var open = $("card").classList.contains("on") || $("compare").classList.contains("on");
+    var detailBtn = document.querySelector('#sheet-tabs button[data-snap="detail"]');
+    if (detailBtn) detailBtn.disabled = !open;
+    var h = isMobile() ? Math.round($("sidebar").getBoundingClientRect().height) : 0;
+    document.querySelector(".map-wrap").style.setProperty("--sheet-h", h + "px");
+  }
+
+  function renderSheetSummary() {
+    var el = $("sheet-summary");
+    if (el) el.textContent = measureLabel().replace(/^./, function (m) { return m.toUpperCase(); });
+  }
+
+  function wireSheet() {
+    Array.prototype.forEach.call(document.querySelectorAll("#sheet-tabs button"), function (b) {
+      b.addEventListener("click", function () { setSnap(b.getAttribute("data-snap")); });
+    });
+    if (MOBILE.addEventListener) MOBILE.addEventListener("change", placePanels);
+    else if (MOBILE.addListener) MOBILE.addListener(placePanels);
+    if (window.ResizeObserver) new ResizeObserver(syncSheet).observe($("sidebar"));
+    placePanels();
+    setSnap(isMobile() ? "collapsed" : "controls");
+  }
+
   /* --------------------------------------------------------------- boot -- */
 
+  /* First data paint: the first frame rendered after a choropleth TILE has
+     loaded. performance.now() counts from navigation start. Until 2025.1.1 this
+     fired on the first `sourcedata` event whose source reported loaded, which is
+     the PMTiles header arriving (no tile requested yet); that moment is still
+     recorded, as __crimeriskFirstMetadata, so old and new numbers can be compared. */
+  var tileLoaded = false;
+
+  function reportMetadata() {
+    if (window.__crimeriskFirstMetadata) return;
+    window.__crimeriskFirstMetadata = Math.round(performance.now());
+  }
+
   function reportPaint() {
-    if (window.__crimeriskFirstPaint) return;
-    // performance.now() is measured from navigation start, so this is the time
-    // from the browser starting the page to the first choropleth tiles being
-    // available to paint - not from when this script happened to run.
+    if (window.__crimeriskFirstPaint || !tileLoaded) return;
     window.__crimeriskFirstPaint = Math.round(performance.now());
     window.__crimeriskScriptStart = Math.round(T0);
     document.documentElement.setAttribute("data-first-data-paint", window.__crimeriskFirstPaint);
@@ -1097,17 +1440,19 @@
       var p = hits[0].properties;
       var gid = p.geoid;
       var v = p[field()];
-      if (v === undefined && level === "bg") {
-        var t = map.queryRenderedFeatures(e.point, { layers: ["fill-tract"] });
-        if (t.length) { p = t[0].properties; v = p[field()]; }
-      }
       map.setFilter("hover-" + level, ["==", ["get", "geoid"], gid]);
       var cls = legendClass(v);
+      var shown;
+      if (v === undefined || v === null) {
+        var st = tileStatus(p, measureIndex());
+        shown = st === ST.SUP ? "Not published" : "No estimate";
+      } else {
+        shown = fmt(v);
+      }
       hover.style.display = "block";
       hover.style.left = Math.min(e.point.x + 14, map.getCanvas().clientWidth - 270) + "px";
       hover.style.top = (e.point.y + 14) + "px";
-      hover.innerHTML = "<span class=\"v\"><b>" +
-        (v === undefined || v === null ? "No value" : fmt(v)) + "</b>" +
+      hover.innerHTML = "<span class=\"v\"><b>" + shown + "</b>" +
         (cls ? " — " + cls.label : "") + "</span>";
       hoverGeoid = gid;
       lookup(level, gid).then(function (rec) {
@@ -1115,7 +1460,7 @@
         var nm = document.createElement("div");
         nm.textContent = placeLine(rec, level, gid);
         hover.insertBefore(nm, hover.firstChild);
-      });
+      }, function () { /* the card reports load errors; the hover chip stays short */ });
     });
 
     map.on("mouseout", function () { hover.style.display = "none"; });
@@ -1130,17 +1475,20 @@
         state.cmp = { level: level, geoid: hits[0].properties.geoid };
         writeUrl();
         renderCompare();
+        setSnap("detail");
       } else {
         select(level, hits[0].properties.geoid, { focus: false });
       }
     });
 
-    map.on("zoomend", function () { updateCountyMode(); updateNote(); writeUrl(); });
+    map.on("zoomend", function () { updateNote(); writeUrl(); });
     map.on("moveend", writeUrl);
-    map.on("idle", reportPaint);
     map.on("sourcedata", function (e) {
-      if (e.sourceId && ["c", "t", "b"].indexOf(e.sourceId) >= 0 && e.isSourceLoaded) reportPaint();
+      if (!e.sourceId || ["c", "t", "b"].indexOf(e.sourceId) < 0) return;
+      if (e.isSourceLoaded) reportMetadata();
+      if (e.tile) tileLoaded = true;
     });
+    map.on("render", reportPaint);
   }
 
   function boot(manifest) {
@@ -1152,15 +1500,29 @@
     $("edition").textContent = M.copy.edition_line;
     document.title = "CrimeRisk — " + M.copy.tagline;
 
+    renderLegendStrip();
+    renderSheetSummary();
+    wireSheet();
+
+    // The archives' headers are requested as soon as the manifest names them, in
+    // parallel with the map's own start-up, instead of after the map's load event.
     var proto = new pmtiles.Protocol();
     maplibregl.addProtocol("pmtiles", proto.tile);
+    ["county", "tract", "bg"].forEach(function (level) {
+      var archive = new pmtiles.PMTiles(M.tiles[level].url);
+      proto.add(archive);
+      archive.getHeader().catch(function () { /* the map reports tile errors */ });
+    });
 
+    // No sprite in the initial style: the map's load event waits for the sprite,
+    // and the choropleth sources are only added on load, so a third-party sprite
+    // host sat on the critical path of the first data paint. The basemap's sprite
+    // is set when the basemap itself is merged.
     map = new maplibregl.Map({
       container: "map",
       style: {
         version: 8,
         glyphs: M.basemap.glyphs,
-        sprite: M.basemap.sprite,
         sources: {},
         layers: [{ id: "paper", type: "background", paint: { "background-color": "#f4f2ee" } }]
       },
@@ -1168,7 +1530,7 @@
       fitBoundsOptions: { padding: 18 },
       maxZoom: 16,
       minZoom: 3,
-      attributionControl: { compact: window.innerWidth <= 700 }
+      attributionControl: { compact: isMobile() }
     });
     if (view) map.jumpTo({ center: view.center, zoom: view.zoom });
 
@@ -1178,8 +1540,8 @@
 
     map.on("load", function () {
       try {
-        var h = hatchImage();
-        map.addImage("hatch", h, { pixelRatio: 2 });
+        map.addImage("hatch", hatchImage(false), { pixelRatio: 2 });
+        map.addImage("hatch-sup", hatchImage(true, "rgba(70,72,76,0.55)"), { pixelRatio: 2 });
       } catch (e) { /* pattern is optional */ }
       addChoropleth();
       applySelectionFilters();
@@ -1208,13 +1570,6 @@
     $("special-toggle").addEventListener("change", function () {
       updateHatch();
       renderLegend();
-    });
-
-    $("sheet-toggle").addEventListener("click", function () {
-      var sb = $("sidebar");
-      var collapsed = sb.getAttribute("data-collapsed") === "true";
-      sb.setAttribute("data-collapsed", String(!collapsed));
-      this.setAttribute("aria-expanded", String(collapsed));
     });
 
     document.addEventListener("keydown", function (e) {

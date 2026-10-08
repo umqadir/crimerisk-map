@@ -184,6 +184,11 @@ button, select, input { font: inherit; color: inherit; }
   background-color: transparent;
 }
 
+/* Suppressed: the no-estimate grey with the mirrored, lighter hatch the map uses. */
+.swatch.sup {
+  background-image: repeating-linear-gradient(-45deg, transparent 0 3px, rgba(70,72,76,.55) 3px 4px);
+}
+
 .legend .range { color: var(--ink-3); font-variant-numeric: tabular-nums; }
 
 .toggle { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12.5px; min-height: 30px; }
@@ -291,6 +296,20 @@ button, select, input { font: inherit; color: inherit; }
 .card .row { font-size: 12.5px; color: var(--ink-2); margin: 0 0 3px; font-variant-numeric: tabular-nums; }
 .card .geoid { font-size: 11.5px; color: var(--ink-3); margin: 7px 0 0; word-break: break-all; }
 .card .source { font-size: 11.5px; color: var(--ink-3); margin: 3px 0 0; line-height: 1.45; }
+.card .times.status { color: var(--ink); font-variant-numeric: normal; line-height: 1.4; }
+.card .note { color: var(--ink); line-height: 1.4; margin-bottom: 6px; }
+.card .actions { margin: 2px 0 8px; }
+.card .actions button {
+  border: 1px solid var(--accent);
+  background: var(--paper);
+  color: var(--accent);
+  border-radius: 3px;
+  padding: 5px 10px;
+  font-size: 12.5px;
+  cursor: pointer;
+  min-height: 32px;
+}
+.card .actions button:hover { background: var(--paper-2); }
 
 .card .links { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--rule); font-size: 12.5px; }
 .card .links button,
@@ -366,69 +385,126 @@ button, select, input { font: inherit; color: inherit; }
 .doc table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 14px 0; }
 .doc th, .doc td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--rule); vertical-align: top; }
 .doc thead th { border-bottom: 1.5px solid var(--ink-3); }
-.doc code { font-size: 13px; background: var(--paper-2); padding: 1px 4px; border-radius: 2px; }
+.doc code { font-size: 13px; background: var(--paper-2); padding: 1px 4px; border-radius: 2px; word-break: break-all; }
 .doc .topbar { margin-bottom: 26px; font-size: 13px; }
 .doc .topbar a { margin-right: 12px; }
 .doc .meta { font-size: 13px; color: var(--ink-3); border-top: 1px solid var(--rule); margin-top: 34px; padding-top: 12px; }
 
+/* The sheet-only parts of the sidebar are hidden on a wide screen. */
+.sheet-tabs, .sheet-summary, .legend-strip, .sheet-detail { display: none; }
+
 /* --------------------------------------------------------------- mobile -- */
+/* One bottom sheet over a full-height map. data-snap on the sheet:
+     collapsed  title, tabs, active measure and a legend strip
+     controls   + search, crime and measure pickers, full legend, links
+     detail     + the selected area's card or the comparison (moved in by app.js) */
 @media (max-width: 700px) {
-  /* The sheet track is capped here, not only on the item, so the map keeps
-     the rest of the viewport and the sheet scrolls inside its own height. */
-  .shell { grid-template-columns: 1fr; grid-template-rows: 1fr minmax(0, 46vh); }
+  .shell { display: block; position: relative; }
+  .map-wrap { position: absolute; inset: 0; }
 
   .sidebar {
-    grid-row: 2;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 10;
     border-right: 0;
     border-top: 1px solid var(--rule);
-    max-height: 46vh;
-    box-shadow: 0 -4px 18px rgba(16, 18, 22, 0.1);
+    border-radius: 12px 12px 0 0;
+    box-shadow: 0 -4px 18px rgba(16, 18, 22, 0.14);
+    max-height: 62vh;
+    max-height: 62dvh;
+    padding-bottom: env(safe-area-inset-bottom);
   }
+  .sidebar[data-snap="detail"] { max-height: 56vh; max-height: 56dvh; }
+  .sidebar[data-snap="collapsed"] > :not(.masthead) { display: none; }
+  .sidebar[data-snap="controls"] > .sheet-detail { display: none; }
+  .sidebar[data-snap="detail"] > .panel,
+  .sidebar[data-snap="detail"] > .foot { display: none; }
 
-  /* Bottom sheet: crime and legend first, then measure, search and links. */
-  .masthead { order: 0; position: sticky; top: 0; background: var(--paper); z-index: 2; }
-  .sidebar > .panel:nth-of-type(2) { order: 3; }   /* search */
-  .sidebar > .panel:nth-of-type(3) { order: 1; }   /* crime */
-  .sidebar > .panel:nth-of-type(4) { order: 2; }   /* measure */
-  .sidebar > .panel:nth-of-type(5) { order: 2; }   /* legend */
-  .sidebar > .foot { order: 4; }
-
-  .sidebar[data-collapsed="true"] { max-height: 56px; overflow: hidden; }
-
-  .masthead { padding: 10px 16px 8px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-  .masthead h1 { font-size: 16px; margin: 0; }
-  .masthead p { display: none; }
-
-  .sheet-toggle {
-    border: 1px solid var(--rule);
+  .masthead {
+    order: 0;
+    position: sticky;
+    top: 0;
+    z-index: 2;
     background: var(--paper);
-    border-radius: 999px;
-    min-height: 34px;
-    padding: 0 12px;
+    padding: 8px 14px 8px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: 4px 10px;
+    border-radius: 12px 12px 0 0;
+  }
+  .masthead::before {
+    content: "";
+    grid-column: 1 / -1;
+    justify-self: center;
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--rule);
+  }
+  .masthead h1 { font-size: 16px; margin: 0; }
+  .masthead .title p { display: none; }
+
+  .sheet-tabs { display: inline-flex; border: 1px solid var(--rule); border-radius: 999px; overflow: hidden; }
+  .sheet-tabs button {
+    border: 0;
+    background: var(--paper);
+    min-height: 36px;
+    padding: 0 11px;
     font-size: 12.5px;
     cursor: pointer;
-    flex: none;
+  }
+  .sheet-tabs button + button { border-left: 1px solid var(--rule); }
+  .sheet-tabs button[aria-pressed="true"] { background: var(--ink); color: #fff; }
+  .sheet-tabs button:disabled { color: var(--ink-3); cursor: default; }
+
+  .sheet-summary { display: block; grid-column: 1 / -1; margin: 0; font-size: 12.5px; color: var(--ink-2); }
+  .legend-strip {
+    display: flex;
+    grid-column: 1 / -1;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: var(--ink-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .legend-strip .bar { display: flex; flex: 1; height: 10px; border-radius: 2px; overflow: hidden; }
+  .legend-strip .bar span { flex: 1; }
+  .legend-strip .swatch { width: 14px; height: 10px; margin-left: 6px; }
+
+  .sheet-detail { display: block; order: 1; }
+  .sheet-detail .card,
+  .sheet-detail .compare {
+    position: static;
+    width: auto;
+    max-width: none;
+    border: 0;
+    border-top: 1px solid var(--rule);
+    border-radius: 0;
+    box-shadow: none;
+    padding: 12px 16px 14px;
   }
 
+  /* Controls first, then the legend, then search and links. */
+  .sidebar > .panel-crime { order: 2; }
+  .sidebar > .panel-measure { order: 3; }
+  .sidebar > .panel-legend { order: 4; }
+  .sidebar > .panel-search { order: 5; }
+  .sidebar > .foot { order: 6; }
+
   .panel { padding: 12px 16px; }
-  .map-wrap { grid-row: 1; }
+
+  /* Controls anchored to the bottom of the map sit above the sheet. */
+  .map-wrap .maplibregl-ctrl-bottom-left,
+  .map-wrap .maplibregl-ctrl-bottom-right { bottom: var(--sheet-h, 0px); }
 
   /* 44 px touch targets. */
   .choices button { min-height: 44px; padding: 0 14px; font-size: 13.5px; }
   .toggle { min-height: 44px; }
   .card .close, .compare .close { width: 44px; height: 44px; top: 2px; right: 2px; }
   .card .links button, .card .links a { padding: 10px 0; display: inline-block; }
+  .card .actions button { min-height: 44px; }
   .search-row input, .search-row button { min-height: 44px; }
-
-  .card, .compare {
-    left: 10px;
-    right: 10px;
-    top: auto;
-    bottom: 10px;
-    width: auto;
-    max-height: 62vh;
-    overflow-y: auto;
-  }
 }
-
-@media (min-width: 701px) { .sheet-toggle { display: none; } }

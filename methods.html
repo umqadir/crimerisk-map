@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Methods — CrimeRisk</title>
 <meta name="description" content="How the CrimeRisk neighborhood crime index is built, in plain language." />
-<link rel="stylesheet" href="styles.css?v=eca7ec8588" />
+<link rel="stylesheet" href="styles.css?v=447d2ea901" />
 </head>
 <body>
 <main class="doc">
@@ -41,6 +41,9 @@
   block groups, areas of roughly 600 to 3,000 residents. Murder and rape are published for census
   tracts only: a single year holds too few of them to say anything about an area as small as a
   block group. Zoomed out, the map shows tracts, then county averages.</p>
+
+  <h2>Unpublished areas</h2>
+  <table><thead><tr><th>State</th><th>Map</th><th>Card</th></tr></thead><tbody><tr><td>Not published: below a denominator or support floor</td><td>Grey, hatched</td><td>Per resident: Not published: fewer than 550 residents.<br />Crime exposure, one offense: Not published: the modeled denominator here is below its floor.<br />Crime exposure, composite: Not published: at least one of its offenses is below its denominator floor here.<br />County average: Not published: a county average needs at least 2 tracts and 2,500 residents.</td></tr><tr><td>Tract only</td><td>Tract shown</td><td>Murder and rape: published for census tracts only. This is the tract that contains the selected block group.</td></tr><tr><td>No estimate</td><td>Grey</td><td>No estimate for this area.</td></tr></tbody></table>
 
   <h2>The three composites</h2>
   <p>Overall, Violent and Property combine the single-offense numbers, weighted by how common
@@ -103,8 +106,10 @@
   <a href="https://github.com/umqadir/crimerisk/blob/main/docs/BUILD.md">build</a>, in the
   <a href="https://github.com/umqadir/crimerisk">source repository</a>.
   Field-level definitions for every published column are also in
-  <a href="https://tiles.qqlab.io/2025.1/downloads/fields_block_group.csv">fields_block_group.csv</a> and
-  <a href="https://tiles.qqlab.io/2025.1/downloads/fields_tract.csv">fields_tract.csv</a>.</p>
+  <a href="https://tiles.qqlab.io/2025.2/downloads/fields_block_group.csv">fields_block_group.csv</a> and
+  <a href="https://tiles.qqlab.io/2025.2/downloads/fields_tract.csv">fields_tract.csv</a>.</p>
+
+  <h2>Evidence bundle</h2><table><thead><tr><th>File</th><th>Size</th><th>SHA-256</th></tr></thead><tbody><tr><td><a href="https://tiles.qqlab.io/2025.2/evidence/crimerisk_2025.2_evidence.tar.gz">crimerisk_2025.2_evidence.tar.gz</a></td><td>246.7 MB</td><td><code>ed411b54ea819c6b4a3288916a22492fd3be13138ae4d24737ef7ea55d628ebc</code></td></tr></tbody></table>
 
   <p class="meta" id="edition-line"></p>
 </main>
