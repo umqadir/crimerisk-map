@@ -671,6 +671,17 @@
     return M.copy.total_mixed;
   }
 
+  /* Suppressed area: the expected annual count, named by the area type. */
+  function suppressedCountText(rec, ec) {
+    var sc = M.suppressed_count;
+    var noun = M.count_noun[state.crime] || ["offense", "offenses"];
+    var label = rec && rec[5] ? M.special_use[rec[5]] : sc.ordinary_label;
+    var n = Math.round(ec);
+    var amount = ec < 0.5 ? "fewer than one " + noun[0] : "about " + fmt(n) + " " + (n === 1 ? noun[0] : noun[1]);
+    var tail = state.measure === "resident" ? sc.resident_tail : sc.exposure_tail;
+    return label + ": " + amount + " a year; " + tail;
+  }
+
   function expectedCount(rec) {
     if (!rec || !rec[7]) return null;
     var idx = M.offense_index[state.crime];
@@ -797,7 +808,9 @@
     // count is published even where the index is suppressed.
     counts.textContent = ec === null
       ? ""
-      : "Expected offenses per year: " + (ec < 0.5 ? "under 1" : fmt(ec));
+      : (!published && !r.error && r.status === ST.SUP && r.level !== "county")
+        ? suppressedCountText(rec, ec)
+        : "Expected offenses per year: " + (ec < 0.5 ? "under 1" : fmt(ec));
 
     // Both measures on the card: the other measure's value for the same crime and area.
     var otherKey = state.measure === "exposure" ? "resident" : "exposure";
